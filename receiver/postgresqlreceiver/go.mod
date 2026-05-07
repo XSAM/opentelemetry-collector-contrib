@@ -143,3 +143,9 @@ retract (
 replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => ../../pkg/golden
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery => ../../internal/sqlquery
+
+replace go.opentelemetry.io/collector/component => github.com/XSAM/opentelemetry-collector/component v0.0.0-20260507002145-0e6cc22a9855
+
+replace go.opentelemetry.io/collector/scraper => github.com/XSAM/opentelemetry-collector/scraper v0.0.0-20260507002145-0e6cc22a9855
+
+replace go.opentelemetry.io/collector/scraper/scraperhelper => github.com/XSAM/opentelemetry-collector/scraper/scraperhelper v0.0.0-20260507002145-0e6cc22a9855

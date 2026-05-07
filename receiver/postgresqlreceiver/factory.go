@@ -96,7 +96,7 @@ func createMetricsReceiver(
 	}
 
 	ns := newPostgreSQLScraper(params, cfg, clientFactory, newCache(1), newTTLCache[string](1, time.Second))
-	s, err := scraper.NewMetrics(ns.scrape, scraper.WithShutdown(ns.shutdown))
+	s, err := scraper.NewMetrics(ns.scrape, scraper.WithShutdown(ns.shutdown), scraper.WithReload(ns.Reload))
 	if err != nil {
 		return nil, err
 	}

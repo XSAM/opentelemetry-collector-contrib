@@ -14,6 +14,9 @@ import (
 type postgreSQLClientFactory interface {
 	getClient(database string) (client, error)
 	close() error
+	// reload swaps in new connection credentials. Existing pooled connections
+	// are closed so subsequent getClient calls pick up the new config.
+	reload(cfg *Config)
 }
 
 // defaultClientFactory creates one PG connection per call
@@ -42,6 +45,15 @@ func (d *defaultClientFactory) getClient(database string) (client, error) {
 
 func (*defaultClientFactory) close() error {
 	return nil
+}
+
+func (d *defaultClientFactory) reload(cfg *Config) {
+	d.baseConfig = postgreSQLConfig{
+		username: cfg.Username,
+		password: string(cfg.Password),
+		address:  cfg.AddrConfig,
+		tls:      cfg.ClientConfig,
+	}
 }
 
 // poolClientFactory creates one PG connection per database, keeping a pool of connections
@@ -106,6 +118,25 @@ func (p *poolClientFactory) close() error {
 
 	p.closed = true
 	return nil
+}
+
+func (p *poolClientFactory) reload(cfg *Config) {
+	p.Lock()
+	defer p.Unlock()
+	p.baseConfig = postgreSQLConfig{
+		username: cfg.Username,
+		password: string(cfg.Password),
+		address:  cfg.AddrConfig,
+		tls:      cfg.ClientConfig,
+	}
+	poolCfg := cfg.ConnectionPool
+	p.poolConfig = &poolCfg
+	// Drain pooled connections so subsequent getClient calls rebuild them
+	// with the new credentials.
+	for db, conn := range p.pool {
+		_ = conn.Close()
+		delete(p.pool, db)
+	}
 }
 
 func (p *poolClientFactory) setPoolSettings(db *sql.DB) {

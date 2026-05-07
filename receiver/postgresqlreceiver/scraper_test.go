@@ -842,6 +842,9 @@ func (mockSimpleClientFactory) close() error {
 	return nil
 }
 
+// reload implements postgreSQLClientFactory.
+func (mockSimpleClientFactory) reload(*Config) {}
+
 // getClient implements postgreSQLClientFactory.
 func (m mockSimpleClientFactory) getClient(string) (client, error) {
 	return &postgreSQLClient{
@@ -941,6 +944,8 @@ func (m *mockClientFactory) close() error {
 	args := m.Called()
 	return args.Error(0)
 }
+
+func (*mockClientFactory) reload(*Config) {}
 
 func (m *mockClientFactory) initMocks(databases []string) {
 	listClient := new(mockClient)

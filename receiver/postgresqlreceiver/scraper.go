@@ -17,6 +17,7 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/hashicorp/golang-lru/v2/expirable"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -403,6 +404,25 @@ func (p *postgreSQLScraper) shutdown(_ context.Context) error {
 	if p.clientFactory != nil {
 		p.clientFactory.close()
 	}
+	return nil
+}
+
+// Reload updates the scraper's client credentials when configuration changes.
+// Only the fields the client factory reads (username, password, address, tls)
+// take effect on the next scrape — other changes require a full restart.
+func (p *postgreSQLScraper) Reload(_ context.Context, cfg component.Config) error {
+	newCfg, ok := cfg.(*Config)
+	if !ok {
+		return fmt.Errorf("postgresqlreceiver: expected *Config, got %T", cfg)
+	}
+	p.config = newCfg
+	if p.clientFactory != nil {
+		p.clientFactory.reload(newCfg)
+	}
+	p.logger.Info("postgresqlreceiver scraper reloaded",
+		zap.String("username", newCfg.Username),
+		zap.String("endpoint", newCfg.Endpoint),
+	)
 	return nil
 }
 
