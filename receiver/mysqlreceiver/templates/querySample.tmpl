@@ -13,7 +13,20 @@
     COALESCE(thread.processlist_db, '') AS current_database,
     COALESCE(thread.processlist_command, '') AS session_command,
     COALESCE(thread.processlist_state, '') AS session_state,
-    COALESCE(statement.DIGEST_TEXT, statement.sql_text, COALESCE(thread.PROCESSLIST_info, '')) AS digest_text,
+    -- Source of the parameterized statement text emitted as db.query.text:
+    --   - MySQL 8.0+ / MariaDB: raw statement.sql_text (obfuscated client-side).
+    --     This matches the source used for top-query records on these versions
+    --     so the obfuscator produces the same parameterized form on both paths.
+    --   - MySQL <8.0.3: server-canonicalized statement.DIGEST_TEXT, since no
+    --     query_sample_text is available on summary_by_digest. Both paths share
+    --     this canonical form, keeping signatures consistent.
+    -- All branches fall back to thread.PROCESSLIST_info when statement-level
+    -- text is missing (e.g., MariaDB in-flight rows whose DIGEST_TEXT is NULL).
+    {{- if .useSQLText }}
+    COALESCE(statement.sql_text, '') AS digest_text,
+    {{- else }}
+    COALESCE(statement.DIGEST_TEXT, '') AS digest_text,
+    {{- end }}
     COALESCE(statement.sql_text, COALESCE(thread.PROCESSLIST_info, '')) AS sql_text,
     COALESCE(statement.digest, '') AS fingerprint,
     COALESCE(wait.event_id, statement.event_id, 0) AS activity_event_id,

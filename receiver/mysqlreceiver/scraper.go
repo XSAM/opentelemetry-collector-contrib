@@ -743,7 +743,16 @@ func (m *mySQLScraper) scrapeTopQueries(now pcommon.Timestamp, errs *scrapererro
 			countStarVal = 0
 		}
 
-		obfuscatedQuery, err := m.obfuscator.obfuscateSQLString(q.digestText)
+		// Use raw sql_text from query_sample_text when available (MySQL 8.0.3+
+		// native column, or MariaDB synthesized via JOIN to events_statements_history).
+		// Fall back to server-canonicalized digest_text on MySQL <8, where no
+		// sql_text source is available on summary_by_digest.
+		queryTextSource := q.querySampleText
+		if queryTextSource == "" {
+			queryTextSource = q.digestText
+		}
+
+		obfuscatedQuery, err := m.obfuscator.obfuscateSQLString(queryTextSource)
 		if err != nil {
 			m.logger.Error("Failed to obfuscate query", zap.Error(err))
 		}
@@ -752,8 +761,7 @@ func (m *mySQLScraper) scrapeTopQueries(now pcommon.Timestamp, errs *scrapererro
 
 		queryPlanCacheID := m.getQueryPlanCacheID(q.digest, q.digestText)
 
-		// querySampleText is "" when the fallback template was used (MySQL <8 / MariaDB).
-		// Skip EXPLAIN in that case — there is no sample statement to explain.
+		// Skip EXPLAIN when no concrete sample statement is available.
 		if q.digest != "" && q.querySampleText != "" {
 			queryPlan = m.retrieveQueryPlan(q.digestText, q.querySampleText, q.schemaName, q.digest, queryPlanCacheID)
 		}

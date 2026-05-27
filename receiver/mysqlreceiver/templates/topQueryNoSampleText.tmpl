@@ -1,13 +1,29 @@
-{{/* Fallback for MySQL <8 / MariaDB. Keep in sync with topQuery.tmpl — differs only in omitting query_sample_text from SELECT and using 5-column Scan. */}}
+{{/* Fallback for MySQL <8 / MariaDB. Differs from topQuery.tmpl in that
+    events_statements_summary_by_digest does not have query_sample_text on
+    these versions. On MariaDB we synthesize a sample by joining
+    events_statements_history on `digest` (most recent execution wins).
+    On MySQL <8 we have no such source, so query_sample_text is empty. */}}
 SELECT
-    COALESCE(`schema_name`, ''),
-    COALESCE(`digest`, ''),
-    COALESCE(`digest_text`, ''),
-    `count_star`,
-    `sum_timer_wait`
-FROM performance_schema.events_statements_summary_by_digest
-WHERE `last_seen` >= NOW() - INTERVAL {{ .lookbackTime }} second
-    AND ((`digest_text` NOT LIKE 'EXPLAIN %' AND `digest_text` NOT LIKE '/* otel-collector-ignore */%')
-        OR `digest_text` IS NULL)
-ORDER BY `count_star` DESC
+    COALESCE(s.`schema_name`, ''),
+    COALESCE(s.`digest`, ''),
+    COALESCE(s.`digest_text`, ''),
+    s.`count_star`,
+    s.`sum_timer_wait`,
+    {{- if .isMariaDB }}
+    COALESCE((
+        SELECT h.sql_text
+        FROM performance_schema.events_statements_history h
+        WHERE h.digest = s.`digest`
+          AND h.sql_text IS NOT NULL
+        ORDER BY h.timer_end DESC
+        LIMIT 1
+    ), '') AS query_sample_text
+    {{- else }}
+    '' AS query_sample_text
+    {{- end }}
+FROM performance_schema.events_statements_summary_by_digest s
+WHERE s.`last_seen` >= NOW() - INTERVAL {{ .lookbackTime }} second
+    AND ((s.`digest_text` NOT LIKE 'EXPLAIN %' AND s.`digest_text` NOT LIKE '/* otel-collector-ignore */%')
+        OR s.`digest_text` IS NULL)
+ORDER BY s.`count_star` DESC
 LIMIT {{ .topNValue }}

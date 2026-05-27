@@ -377,14 +377,14 @@ func TestIntegrationLogScraper(t *testing.T) {
 							assert.NotEmpty(t, plan.Str(), "mysql.query_plan present but empty")
 						}
 
-						// On MySQL <8 / MariaDB the fallback template omits query_sample_text,
-						// so the plan cache key will never be populated by top-query scraping.
-						// On MySQL 8+ the shared cache should have been populated for any
-						// digest that had a valid sample.
-						if !tc.wantSampleTextCol {
-							// No sample text → plan cache must be empty (nothing to EXPLAIN).
+						// MySQL 8.0+ has native query_sample_text; MariaDB synthesizes
+						// one via JOIN to events_statements_history. Both produce a
+						// non-empty sample for active digests, so the shared plan cache
+						// should be populated by top-query scraping. MySQL <8.0.3 has
+						// no sample-text source — the cache stays empty.
+						if !tc.wantSampleTextCol && tc.wantProduct != "MariaDB" {
 							assert.Equal(t, 0, sharedPlanCache.Len(),
-								"plan cache should be empty when fallback template used (no sample text)")
+								"plan cache should be empty on MySQL <8.0.3 (no sample text source)")
 						}
 					}
 				}
@@ -567,18 +567,18 @@ func TestVersionCompatibility(t *testing.T) {
 			queries, err := c.getTopQueries(10, 60, dv.supportsQuerySampleText())
 			require.NoError(t, err, "getTopQueries should not fail (wrong template would cause 'unknown column' error)")
 
-			// For MySQL 8+, any top queries returned must have querySampleText
-			// populated (non-empty string is only possible with the 6-column query).
-			// For MySQL <8 / MariaDB, querySampleText must always be empty string
-			// because the fallback template omits the column.
+			// On MySQL 8.0.3+ the native query_sample_text column is read from
+			// summary_by_digest. On MariaDB, query_sample_text is synthesized via
+			// LEFT JOIN to events_statements_history. On MySQL <8.0.3 there is no
+			// source for raw sample text, so the column is always empty.
 			for _, q := range queries {
-				if tc.wantSampleTextCol {
-					// Value may be empty string if the digest row has no sample yet,
-					// but the field must have been scanned (no scan error above).
-					_ = q.querySampleText
-				} else {
+				if tc.wantProduct == dbProductMySQL && !tc.wantSampleTextCol {
 					assert.Empty(t, q.querySampleText,
-						"querySampleText must be empty when using fallback template (digest: %s)", q.digest)
+						"querySampleText must be empty on MySQL <8.0.3 (no sample text source) (digest: %s)", q.digest)
+				} else {
+					// Value may be empty if the digest has no recent sample in
+					// history, but the column must be readable (scan succeeded).
+					_ = q.querySampleText
 				}
 			}
 
@@ -885,6 +885,169 @@ func TestIntegrationQuerySampleAttributes(t *testing.T) {
 				assertIntAttrNonNegative(t, attrs, "network.peer.port", idx)
 			}
 			assert.True(t, found, "expected to find a GET_LOCK query sample record for the blocked call")
+		})
+	}
+}
+
+// TestIntegrationQueryTextParity asserts that the same digest produces the
+// same db.query.text on both the top-query and the query-sample paths within
+// a given MySQL/MariaDB version. This is the property that lets downstream
+// consumers join samples to top-queries by query text (or its hash).
+//
+// The test runs a blocked GET_LOCK so that the same digest exists in both
+// events_statements_summary_by_digest (top-query) and events_statements_current
+// (query-sample), then compares the obfuscated db.query.text from each path.
+func TestIntegrationQueryTextParity(t *testing.T) {
+	testCases := []struct {
+		name  string
+		image string
+	}{
+		{name: "MySQL-8.0.33", image: "mysql:8.0.33"},
+		{name: "MySQL-5.7", image: "mysql:5.7"},
+		{name: "MariaDB-10.11", image: "mariadb:10.11"},
+		{name: "MariaDB-11.4", image: "mariadb:11.4"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+
+			ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+				ContainerRequest: testcontainers.ContainerRequest{
+					Image:        tc.image,
+					ExposedPorts: []string{mysqlPort},
+					Cmd: []string{
+						"--performance_schema=ON",
+						"--max_digest_length=4096",
+						"--performance_schema_max_digest_length=4096",
+						"--performance_schema_max_sql_text_length=4096",
+					},
+					WaitingFor: wait.ForAll(
+						wait.ForListeningPort(mysqlPort).WithStartupTimeout(2*time.Minute),
+						wait.ForLog("ready for connections").WithStartupTimeout(2*time.Minute),
+					),
+					Env: map[string]string{
+						"MYSQL_ROOT_PASSWORD":   "otel",
+						"MYSQL_DATABASE":        "otel",
+						"MYSQL_USER":            "otel",
+						"MYSQL_PASSWORD":        "otel",
+						"MARIADB_ROOT_PASSWORD": "otel",
+						"MARIADB_DATABASE":      "otel",
+						"MARIADB_USER":          "otel",
+						"MARIADB_PASSWORD":      "otel",
+					},
+				},
+				Started: true,
+			})
+			testcontainers.CleanupContainer(t, ctr)
+			if err != nil && strings.Contains(err.Error(), "No such image") {
+				t.Skipf("image %s not available locally: %v", tc.image, err)
+			}
+			require.NoError(t, err)
+
+			host, err := ctr.Host(ctx)
+			require.NoError(t, err)
+			mappedPort, err := ctr.MappedPort(ctx, mysqlPort)
+			require.NoError(t, err)
+
+			cfg := containerConfig(host, mappedPort.Port())
+			runPerfSchemaSetup(t, cfg)
+
+			sharedPlanCache := newTTLCache[string](cfg.TopQueryCollection.QueryPlanCacheSize, 0)
+			settings := receivertest.NewNopSettings(metadata.Type)
+			scraper := newMySQLScraper(
+				settings,
+				cfg,
+				newCache[int64](int(cfg.TopQueryCollection.MaxQuerySampleCount*2*2)),
+				sharedPlanCache,
+			)
+			require.NoError(t, scraper.start(ctx, nil))
+			defer func() { assert.NoError(t, scraper.shutdown(ctx)) }()
+
+			// runWorkload registers SELECTs in summary_by_digest.
+			runWorkload(t, cfg)
+
+			// Hold the advisory lock; the waiter is blocked and visible in
+			// events_statements_current for the query-sample path.
+			cleanup := runBlockedCall(t, cfg)
+			defer cleanup()
+
+			// Fetch top-queries directly through the client (bypasses the
+			// scraper's sum_timer_wait diff filter, which can require multiple
+			// scrapes spaced over time to register a delta from short workloads).
+			// We're testing query-text parity, not the diff/cache logic.
+			c, err := newMySQLClient(cfg)
+			require.NoError(t, err)
+			require.NoError(t, c.Connect())
+			defer c.Close()
+			topQueries, err := c.getTopQueries(
+				cfg.TopQueryCollection.MaxQuerySampleCount,
+				cfg.TopQueryCollection.LookbackTime,
+				c.getDBVersion().supportsQuerySampleText())
+			require.NoError(t, err)
+
+			obfuscator := newObfuscator()
+			obfuscate := func(s string) string {
+				out, oerr := obfuscator.obfuscateSQLString(s)
+				require.NoError(t, oerr, "obfuscation failed for %q", s)
+				return out
+			}
+
+			// Build the same db.query.text that the scraper would emit per digest:
+			// MySQL 8+/MariaDB use querySampleText (raw sql_text); MySQL <8 uses
+			// digestText. Mirror scraper.scrapeTopQueries logic.
+			topByDigest := map[string]string{}
+			topByText := map[string]struct{}{}
+			for _, q := range topQueries {
+				src := q.querySampleText
+				if src == "" {
+					src = q.digestText
+				}
+				if src == "" {
+					continue
+				}
+				ot := obfuscate(src)
+				topByDigest[q.digest] = ot
+				topByText[ot] = struct{}{}
+				t.Logf("top-query[digest=%s]: %s", q.digest, ot)
+			}
+			require.NotEmpty(t, topByText, "expected at least one top-query record with text")
+
+			sampleLogs, err := scraper.scrapeQuerySampleFunc(ctx)
+			require.NoError(t, err, "scrapeQuerySampleFunc must not error")
+
+			matched := 0
+			for i := range sampleLogs.ResourceLogs().Len() {
+				rl := sampleLogs.ResourceLogs().At(i)
+				for j := range rl.ScopeLogs().Len() {
+					sl := rl.ScopeLogs().At(j)
+					for k := range sl.LogRecords().Len() {
+						attrs := sl.LogRecords().At(k).Attributes()
+						qt, ok := attrs.Get("db.query.text")
+						require.True(t, ok, "sample record missing db.query.text")
+						digest := ""
+						if d, hasDigest := attrs.Get("mysql.events_statements_current.digest"); hasDigest {
+							digest = d.Str()
+						}
+						t.Logf("query-sample[digest=%s]: %s", digest, qt.Str())
+
+						if digest != "" {
+							if topText, ok := topByDigest[digest]; ok {
+								assert.Equal(t, topText, qt.Str(),
+									"db.query.text mismatch for digest %s: top=%q sample=%q",
+									digest, topText, qt.Str())
+								matched++
+								continue
+							}
+						}
+						if _, ok := topByText[qt.Str()]; ok {
+							matched++
+						}
+					}
+				}
+			}
+			assert.Greater(t, matched, 0,
+				"expected at least one query-sample record to match a top-query record by db.query.text")
 		})
 	}
 }

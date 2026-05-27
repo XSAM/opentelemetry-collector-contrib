@@ -857,9 +857,10 @@ var topQueryTemplate string
 var topQueryNoSampleTextTemplate string
 
 func (c *mySQLClient) getTopQueries(topNValue, lookbackTime uint64, supportsSampleText bool) ([]topQuery, error) {
-	// Select the appropriate template based on version support.
-	// MySQL <8 and all MariaDB versions lack query_sample_text in
-	// events_statements_summary_by_digest, so we use the 5-column fallback.
+	// Template selection by source of query_sample_text:
+	//   - MySQL 8.0.3+ : native query_sample_text on summary_by_digest
+	//   - MariaDB      : synthesize via JOIN to events_statements_history on digest
+	//   - MySQL <8     : no source available; query_sample_text emitted as ''
 	tmplSrc := topQueryTemplate
 	if !supportsSampleText {
 		tmplSrc = topQueryNoSampleTextTemplate
@@ -874,6 +875,7 @@ func (c *mySQLClient) getTopQueries(topNValue, lookbackTime uint64, supportsSamp
 	if tmplErr = tmpl.Execute(&buf, map[string]any{
 		"topNValue":    topNValue,
 		"lookbackTime": lookbackTime,
+		"isMariaDB":    c.dbVersion.product == dbProductMariaDB,
 	}); tmplErr != nil {
 		return nil, fmt.Errorf("failed to execute template: %w", tmplErr)
 	}
@@ -885,33 +887,17 @@ func (c *mySQLClient) getTopQueries(topNValue, lookbackTime uint64, supportsSamp
 
 	defer rows.Close()
 
-	// scanRow is defined once outside the loop to avoid re-evaluating
-	// supportsSampleText on every iteration.
-	scanRow := func(tq *topQuery) error {
-		if supportsSampleText {
-			return rows.Scan(
-				&tq.schemaName,
-				&tq.digest,
-				&tq.digestText,
-				&tq.countStar,
-				&tq.sumTimerWaitInPicoSeconds,
-				&tq.querySampleText,
-			)
-		}
-		// querySampleText stays "" — sentinel for "no sample available"
-		return rows.Scan(
+	var topQueries []topQuery
+	for rows.Next() {
+		var tq topQuery
+		if err := rows.Scan(
 			&tq.schemaName,
 			&tq.digest,
 			&tq.digestText,
 			&tq.countStar,
 			&tq.sumTimerWaitInPicoSeconds,
-		)
-	}
-
-	var topQueries []topQuery
-	for rows.Next() {
-		var tq topQuery
-		if err := scanRow(&tq); err != nil {
+			&tq.querySampleText,
+		); err != nil {
 			return nil, err
 		}
 		topQueries = append(topQueries, tq)
@@ -926,9 +912,19 @@ func (c *mySQLClient) getQuerySamples(limit uint64, supportsProcesslist bool) ([
 	tmpl := template.Must(template.New("querySample").Option("missingkey=error").Parse(querySampleTemplate))
 	buf := bytes.Buffer{}
 
+	// useSQLText controls which column feeds db.query.text for query samples.
+	// On MySQL 8.0+ and all MariaDB versions, source raw sql_text and rely on
+	// client-side obfuscation, so samples can match the sql_text-form used by
+	// top-query records on the same versions. MySQL <8.0.3 has no source of
+	// raw sql_text on summary_by_digest, so both paths use DIGEST_TEXT there.
+	useSQLText := c.dbVersion.product == dbProductMariaDB ||
+		(c.dbVersion.product == dbProductMySQL && c.dbVersion.isValid() &&
+			!c.dbVersion.version.LessThan(minMySQLQuerySampleTextVersion))
+
 	if err := tmpl.Execute(&buf, map[string]any{
 		"limit":               limit,
 		"supportsProcesslist": supportsProcesslist,
+		"useSQLText":          useSQLText,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
