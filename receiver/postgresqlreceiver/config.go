@@ -9,12 +9,14 @@ import (
 	"net"
 	"time"
 
+	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configopaque"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/multierr"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
 
@@ -25,6 +27,8 @@ const (
 	ErrNotSupported        = "invalid config: field '%s' not supported"
 	ErrTransportsSupported = "invalid config: 'transport' must be 'tcp' or 'unix'"
 	ErrHostPort            = "invalid config: 'endpoint' must be in the form <host>:<port> no matter what 'transport' is configured"
+	// #nosec G101 - not hardcoded credentials
+	ErrPasswordAndAuth = "invalid config: set either 'password' or 'authentication', not both"
 )
 
 type TopQueryCollection struct {
@@ -46,17 +50,22 @@ type QuerySampleCollection struct {
 
 type Config struct {
 	scraperhelper.ControllerConfig `mapstructure:",squash"`
-	Username                       string                         `mapstructure:"username"`
-	Password                       configopaque.String            `mapstructure:"password"`
-	Databases                      []string                       `mapstructure:"databases"`
-	ExcludeDatabases               []string                       `mapstructure:"exclude_databases"`
-	confignet.AddrConfig           `mapstructure:",squash"`       // provides Endpoint and Transport
-	configtls.ClientConfig         `mapstructure:"tls,omitempty"` // provides SSL details
-	ConnectionPool                 `mapstructure:"connection_pool,omitempty"`
-	metadata.MetricsBuilderConfig  `mapstructure:",squash"`
-	metadata.LogsBuilderConfig     `mapstructure:",squash"`
-	QuerySampleCollection          `mapstructure:"query_sample_collection,omitempty"`
-	TopQueryCollection             `mapstructure:"top_query_collection,omitempty"`
+	Username                       string              `mapstructure:"username"`
+	Password                       configopaque.String `mapstructure:"password"`
+	// Authentication optionally sources the connection credential from a
+	// credentials provider (e.g. AWS IAM) instead of a static password. When set,
+	// the provider supplies the password at connection-open time. Mutually
+	// exclusive with the top-level password field.
+	Authentication                configcredentials.Authentication `mapstructure:"authentication,omitempty"`
+	Databases                     []string                         `mapstructure:"databases"`
+	ExcludeDatabases              []string                         `mapstructure:"exclude_databases"`
+	confignet.AddrConfig          `mapstructure:",squash"`         // provides Endpoint and Transport
+	configtls.ClientConfig        `mapstructure:"tls,omitempty"`   // provides SSL details
+	ConnectionPool                `mapstructure:"connection_pool,omitempty"`
+	metadata.MetricsBuilderConfig `mapstructure:",squash"`
+	metadata.LogsBuilderConfig    `mapstructure:",squash"`
+	QuerySampleCollection         `mapstructure:"query_sample_collection,omitempty"`
+	TopQueryCollection            `mapstructure:"top_query_collection,omitempty"`
 }
 
 type ConnectionPool struct {
@@ -71,8 +80,23 @@ func (cfg *Config) Validate() error {
 	if cfg.Username == "" {
 		err = multierr.Append(err, errors.New(ErrNoUsername))
 	}
-	if cfg.Password == "" {
+
+	// Credential source precedence (R12): a static password and an authentication
+	// block are mutually exclusive. A username alongside an authentication block is
+	// expected — the provider may use it as a mint input. When an authentication
+	// block is configured, the password is supplied by the provider, so the
+	// top-level password is not required.
+	authConfigured := !cfg.Authentication.IsEmpty()
+	switch {
+	case authConfigured && cfg.Password != "":
+		err = multierr.Append(err, errors.New(ErrPasswordAndAuth))
+	case !authConfigured && cfg.Password == "":
 		err = multierr.Append(err, errors.New(ErrNoPassword))
+	}
+	if authConfigured {
+		if authErr := cfg.Authentication.Validate(); authErr != nil {
+			err = multierr.Append(err, authErr)
+		}
 	}
 
 	// The lib/pq module does not support overriding ServerName or specifying supported TLS versions
@@ -97,4 +121,33 @@ func (cfg *Config) Validate() error {
 	}
 
 	return err
+}
+
+// credentialProviderFactories is the set of credential providers this receiver
+// supports under its authentication block. Supplied as an explicit slice — there
+// is no global registration.
+func credentialProviderFactories() []configcredentials.ProviderFactory {
+	return []configcredentials.ProviderFactory{awsiam.NewFactory()}
+}
+
+// resolveCredentialProvider builds the credential provider from the authentication
+// block, or returns (nil, nil) when no authentication block is configured (the
+// receiver then uses its static password). The receiver's endpoint and username
+// are sourced into the provider's sub-config so operators do not repeat them —
+// the provider needs them as mint inputs but the receiver already has them.
+func (cfg *Config) resolveCredentialProvider() (configcredentials.Provider, error) {
+	if cfg.Authentication.IsEmpty() {
+		return nil, nil
+	}
+	for _, sub := range cfg.Authentication.Settings {
+		if m, ok := sub.(map[string]any); ok {
+			if _, set := m["endpoint"]; !set {
+				m["endpoint"] = cfg.Endpoint
+			}
+			if _, set := m["db_user"]; !set {
+				m["db_user"] = cfg.Username
+			}
+		}
+	}
+	return cfg.Authentication.Resolve(configcredentials.ProviderSettings{}, credentialProviderFactories())
 }

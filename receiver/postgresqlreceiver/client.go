@@ -18,6 +18,7 @@ import (
 	"text/template"
 	"time"
 
+	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/otel/propagation"
@@ -187,6 +188,11 @@ type postgreSQLConfig struct {
 	database string
 	address  confignet.AddrConfig
 	tls      configtls.ClientConfig
+	// credentialProvider, when non-nil, supplies the password (and optionally the
+	// username) at connection-string-build time instead of the static password.
+	// It is resolved once per *sql.DB build, so each new connection picks up a
+	// freshly-minted credential without a collector restart.
+	credentialProvider configcredentials.Provider
 }
 
 func sslConnectionString(tls configtls.ClientConfig) string {
@@ -235,7 +241,21 @@ func (c postgreSQLConfig) ConnectionString() (string, error) {
 		host = "/" + host
 	}
 
-	return fmt.Sprintf("port=%s host=%s user=%s password=%s dbname=%s %s", port, host, c.username, c.password, database, sslConnectionString(c.tls)), nil
+	username, password := c.username, c.password
+	if c.credentialProvider != nil {
+		// Resolve the credential at build time so each new connection uses a
+		// currently-valid secret (e.g. a freshly-minted AWS IAM token).
+		cred, credErr := c.credentialProvider.GetCredential(context.Background())
+		if credErr != nil {
+			return "", fmt.Errorf("resolve credential: %w", credErr)
+		}
+		password = cred.Secret
+		if cred.Username != nil {
+			username = *cred.Username
+		}
+	}
+
+	return fmt.Sprintf("port=%s host=%s user=%s password=%s dbname=%s %s", port, host, username, password, database, sslConnectionString(c.tls)), nil
 }
 
 func (c *postgreSQLClient) Close() error {

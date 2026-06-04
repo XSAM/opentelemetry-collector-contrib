@@ -88,11 +88,9 @@ func createMetricsReceiver(
 ) (receiver.Metrics, error) {
 	cfg := rConf.(*Config)
 
-	var clientFactory postgreSQLClientFactory
-	if metadata.ReceiverPostgresqlConnectionPoolFeatureGate.IsEnabled() {
-		clientFactory = newPoolClientFactory(cfg)
-	} else {
-		clientFactory = newDefaultClientFactory(cfg)
+	clientFactory, err := newClientFactory(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	ns := newPostgreSQLScraper(params, cfg, clientFactory, newCache(1), newTTLCache[string](1, time.Second))
@@ -116,11 +114,9 @@ func createLogsReceiver(
 ) (receiver.Logs, error) {
 	cfg := receiverCfg.(*Config)
 
-	var clientFactory postgreSQLClientFactory
-	if metadata.ReceiverPostgresqlConnectionPoolFeatureGate.IsEnabled() {
-		clientFactory = newPoolClientFactory(cfg)
-	} else {
-		clientFactory = newDefaultClientFactory(cfg)
+	clientFactory, err := newClientFactory(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	opts := make([]scraperhelper.ControllerOption, 0)

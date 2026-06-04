@@ -5,10 +5,13 @@ package postgresqlreceiver // import "github.com/open-telemetry/opentelemetry-co
 
 import (
 	"database/sql"
+	"errors"
 	"sync"
 
 	"github.com/lib/pq"
 	"go.uber.org/multierr"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
 
 type postgreSQLClientFactory interface {
@@ -16,20 +19,34 @@ type postgreSQLClientFactory interface {
 	close() error
 }
 
+// newClientFactory selects the pool or default client factory based on the
+// connection-pool feature gate, resolving the credential provider in the process.
+func newClientFactory(cfg *Config) (postgreSQLClientFactory, error) {
+	if metadata.ReceiverPostgresqlConnectionPoolFeatureGate.IsEnabled() {
+		return newPoolClientFactory(cfg)
+	}
+	return newDefaultClientFactory(cfg)
+}
+
 // defaultClientFactory creates one PG connection per call
 type defaultClientFactory struct {
 	baseConfig postgreSQLConfig
 }
 
-func newDefaultClientFactory(cfg *Config) *defaultClientFactory {
+func newDefaultClientFactory(cfg *Config) (*defaultClientFactory, error) {
+	provider, err := cfg.resolveCredentialProvider()
+	if err != nil {
+		return nil, err
+	}
 	return &defaultClientFactory{
 		baseConfig: postgreSQLConfig{
-			username: cfg.Username,
-			password: string(cfg.Password),
-			address:  cfg.AddrConfig,
-			tls:      cfg.ClientConfig,
+			username:           cfg.Username,
+			password:           string(cfg.Password),
+			address:            cfg.AddrConfig,
+			tls:                cfg.ClientConfig,
+			credentialProvider: provider,
 		},
-	}
+	}, nil
 }
 
 func (d *defaultClientFactory) getClient(database string) (client, error) {
@@ -53,7 +70,15 @@ type poolClientFactory struct {
 	closed     bool
 }
 
-func newPoolClientFactory(cfg *Config) *poolClientFactory {
+func newPoolClientFactory(cfg *Config) (*poolClientFactory, error) {
+	// The connection pool caches a *sql.DB per database for the process lifetime,
+	// so a credential resolved once at pool creation would never refresh — an
+	// expiring token (e.g. AWS IAM, ~15m) would go stale. Until pooled refresh is
+	// implemented, refuse the combination rather than silently serving stale
+	// credentials (R11a).
+	if !cfg.Authentication.IsEmpty() {
+		return nil, errors.New("invalid config: the connection_pool feature gate is not supported with an 'authentication' block, because pooled connections would not refresh an expiring credential")
+	}
 	poolCfg := cfg.ConnectionPool
 	return &poolClientFactory{
 		baseConfig: postgreSQLConfig{
@@ -65,7 +90,7 @@ func newPoolClientFactory(cfg *Config) *poolClientFactory {
 		poolConfig: &poolCfg,
 		pool:       make(map[string]*sql.DB),
 		closed:     false,
-	}
+	}, nil
 }
 
 func (p *poolClientFactory) getClient(database string) (client, error) {

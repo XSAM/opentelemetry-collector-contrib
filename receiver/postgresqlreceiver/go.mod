@@ -8,6 +8,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lib/pq v1.12.3
+	github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery v0.153.0
@@ -18,6 +19,7 @@ require (
 	github.com/tj/assert v0.0.3
 	go.opentelemetry.io/collector/component v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/component/componenttest v0.153.1-0.20260528150546-fe2cf23ff222
+	go.opentelemetry.io/collector/config/configcredentials v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/confignet v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/configopaque v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/configtls v1.59.1-0.20260528150546-fe2cf23ff222
@@ -45,6 +47,21 @@ require (
 	github.com/DataDog/datadog-go/v5 v5.8.3 // indirect
 	github.com/DataDog/go-sqllexer v0.1.12 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.41.10 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.32.21 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.20 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.10 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.26 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.26 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.27 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.10 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.26 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.1.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.31.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.43.0 // indirect
+	github.com/aws/smithy-go v1.26.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
@@ -73,7 +90,7 @@ require (
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/providers/confmap v1.0.0 // indirect
-	github.com/knadh/koanf/v2 v2.3.4 // indirect
+	github.com/knadh/koanf/v2 v2.3.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20250317134145-8bc96cf8fc35 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -89,6 +106,7 @@ require (
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth v0.0.0-00010101000000-000000000000 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil v0.153.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -143,3 +161,13 @@ retract (
 replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => ../../pkg/golden
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery => ../../internal/sqlquery
+
+// DEV-ONLY: configcredentials is not yet released in a tagged core version, and
+// the aws_iam provider lives in this same contrib working tree. These local-path
+// replaces bridge both for development. REMOVE before opening a contrib PR — a
+// committed local-path replace is not mergeable.
+replace go.opentelemetry.io/collector/config/configcredentials => ../../../opentelemetry-collector/config/configcredentials
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam => ../../credentialsprovider/awsiam
+
+replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth => ../../internal/aws/iamauth
