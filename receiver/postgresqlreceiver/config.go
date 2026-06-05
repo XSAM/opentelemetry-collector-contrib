@@ -132,22 +132,13 @@ func credentialProviderFactories() []configcredentials.ProviderFactory {
 
 // resolveCredentialProvider builds the credential provider from the authentication
 // block, or returns (nil, nil) when no authentication block is configured (the
-// receiver then uses its static password). The receiver's endpoint and username
-// are sourced into the provider's sub-config so operators do not repeat them —
-// the provider needs them as mint inputs but the receiver already has them.
+// receiver then uses its static password). Provider-specific inputs (such as the
+// AWS IAM provider's endpoint and db_user) come from the operator's inline
+// provider config — the receiver does not inject them, keeping it agnostic to any
+// provider's config schema.
 func (cfg *Config) resolveCredentialProvider() (configcredentials.Provider, error) {
 	if cfg.Authentication.IsEmpty() {
 		return nil, nil
-	}
-	for _, sub := range cfg.Authentication.Settings {
-		if m, ok := sub.(map[string]any); ok {
-			if _, set := m["endpoint"]; !set {
-				m["endpoint"] = cfg.Endpoint
-			}
-			if _, set := m["db_user"]; !set {
-				m["db_user"] = cfg.Username
-			}
-		}
 	}
 	return cfg.Authentication.Resolve(configcredentials.ProviderSettings{}, credentialProviderFactories())
 }

@@ -87,7 +87,7 @@ func TestConfigValidate_PasswordAndAuthMutuallyExclusive(t *testing.T) {
 	cfg.Username = "u"
 	cfg.Password = "static"
 	cfg.Authentication = configcredentials.Authentication{
-		Settings: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
 	err := cfg.Validate()
@@ -100,28 +100,43 @@ func TestConfigValidate_AuthWithoutPasswordIsValid(t *testing.T) {
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
 	cfg.Authentication = configcredentials.Authentication{
-		Settings: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
 	require.NoError(t, cfg.Validate(), "an authentication block satisfies the credential requirement without a password")
 }
 
-func TestResolveCredentialProvider_SourcesEndpointAndUser(t *testing.T) {
+func TestResolveCredentialProvider_BuildsFromOperatorConfig(t *testing.T) {
+	// The operator supplies the provider's mint inputs (endpoint, db_user) inline;
+	// the receiver does not inject them, staying agnostic to the provider schema.
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
 	cfg.Authentication = configcredentials.Authentication{
-		Settings: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{
+			"region":   "us-east-1",
+			"endpoint": "db.example.com:5432",
+			"db_user":  "monitor",
+		}},
 	}
 
 	p, err := cfg.resolveCredentialProvider()
 	require.NoError(t, err)
-	require.NotNil(t, p, "an authentication block yields a provider")
+	require.NotNil(t, p, "a fully-configured authentication block yields a provider")
+}
 
-	// The receiver sourced its endpoint/username into the aws_iam sub-config.
-	sub := cfg.Authentication.Settings["aws_iam"].(map[string]any)
-	assert.Equal(t, "db.example.com:5432", sub["endpoint"])
-	assert.Equal(t, "monitor", sub["db_user"])
+func TestResolveCredentialProvider_MissingMintInputsErrors(t *testing.T) {
+	// Without the provider's required inputs, resolve fails — the receiver does not
+	// silently fill them in.
+	cfg := createDefaultConfig().(*Config)
+	cfg.Endpoint = "db.example.com:5432"
+	cfg.Username = "monitor"
+	cfg.Authentication = configcredentials.Authentication{
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+	}
+
+	_, err := cfg.resolveCredentialProvider()
+	require.Error(t, err, "aws_iam requires endpoint and db_user from the operator")
 }
 
 func TestResolveCredentialProvider_NoAuthReturnsNil(t *testing.T) {
@@ -140,7 +155,7 @@ func TestNewPoolClientFactory_RefusesAuth(t *testing.T) {
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
 	cfg.Authentication = configcredentials.Authentication{
-		Settings: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
 	_, err := newPoolClientFactory(cfg)
