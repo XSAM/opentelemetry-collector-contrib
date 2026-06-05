@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package awsiam // import "github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam"
+package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 
 import "errors"
 

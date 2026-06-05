@@ -1,19 +1,13 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package awsiam provides an AWS RDS IAM database-authentication credentials
-// provider for the configcredentials framework. It mints short-lived RDS auth
-// tokens and supplies them as the connection secret, so a database receiver can
-// authenticate to RDS/Aurora with IAM instead of a static password.
-package awsiam // import "github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam"
+package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 
 import (
 	"fmt"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configcredentials"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 )
 
 // typeStr is the inline auth-type key: authentication: { aws_iam: {...} }.
@@ -41,8 +35,8 @@ func (*factory) CreateProvider(_ configcredentials.ProviderSettings, cfg compone
 		return nil, err
 	}
 	return &provider{
-		minter: iamauth.NewMinter(),
-		target: iamauth.Target{
+		minter: NewMinter(),
+		target: Target{
 			Endpoint: c.Endpoint,
 			Region:   c.Region,
 			DBUser:   c.DBUser,

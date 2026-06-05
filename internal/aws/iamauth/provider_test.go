@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package awsiam
+package iamauth
 
 import (
 	"context"
@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/config/configcredentials"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 )
 
 // fakeMinter records calls and returns a canned token without touching AWS.
@@ -23,19 +21,19 @@ type fakeMinter struct {
 	notAfter time.Time
 	err      error
 	calls    int64
-	lastTgt  iamauth.Target
+	lastTgt  Target
 }
 
-func (f *fakeMinter) Token(_ context.Context, t iamauth.Target) (string, time.Time, error) {
+func (f *fakeMinter) Token(_ context.Context, t Target) (string, time.Time, error) {
 	atomic.AddInt64(&f.calls, 1)
 	f.lastTgt = t
 	return f.token, f.notAfter, f.err
 }
 
-func newProviderWithMinter(c *Config, m minter) *provider {
+func newProviderWithMinter(c *Config, m tokenMinter) *provider {
 	return &provider{
 		minter: m,
-		target: iamauth.Target{Endpoint: c.Endpoint, Region: c.Region, DBUser: c.DBUser, RoleARN: c.RoleARN},
+		target: Target{Endpoint: c.Endpoint, Region: c.Region, DBUser: c.DBUser, RoleARN: c.RoleARN},
 	}
 }
 
@@ -82,7 +80,7 @@ func TestProvider_GetCredential(t *testing.T) {
 	require.NotNil(t, cred.NotAfter)
 	assert.Equal(t, exp, *cred.NotAfter)
 	// Target (incl. role_arn) is threaded to the minter.
-	assert.Equal(t, iamauth.Target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor", RoleARN: "arn:role"}, m.lastTgt)
+	assert.Equal(t, Target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor", RoleARN: "arn:role"}, m.lastTgt)
 }
 
 func TestProvider_GetCredential_MintError(t *testing.T) {

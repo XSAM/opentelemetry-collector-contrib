@@ -8,7 +8,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lib/pq v1.12.3
-	github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth v0.0.0-00010101000000-000000000000
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery v0.153.0
@@ -106,7 +106,6 @@ require (
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth v0.0.0-00010101000000-000000000000 // indirect
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatautil v0.153.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -162,12 +161,9 @@ replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => 
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery => ../../internal/sqlquery
 
-// DEV-ONLY: configcredentials is not yet released in a tagged core version, and
-// the aws_iam provider lives in this same contrib working tree. These local-path
-// replaces bridge both for development. REMOVE before opening a contrib PR — a
-// committed local-path replace is not mergeable.
+// DEV-ONLY: configcredentials is not yet released in a tagged core version. This
+// local-path replace bridges it for development. REMOVE before opening a contrib
+// PR — a committed local-path replace is not mergeable.
 replace go.opentelemetry.io/collector/config/configcredentials => ../../../opentelemetry-collector/config/configcredentials
-
-replace github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam => ../../credentialsprovider/awsiam
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth => ../../internal/aws/iamauth

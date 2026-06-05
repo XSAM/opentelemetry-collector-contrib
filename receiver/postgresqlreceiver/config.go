@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/multierr"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/credentialsprovider/awsiam"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
 
@@ -127,7 +127,7 @@ func (cfg *Config) Validate() error {
 // supports under its authentication block. Supplied as an explicit slice — there
 // is no global registration.
 func credentialProviderFactories() []configcredentials.ProviderFactory {
-	return []configcredentials.ProviderFactory{awsiam.NewFactory()}
+	return []configcredentials.ProviderFactory{iamauth.NewFactory()}
 }
 
 // resolveCredentialProvider builds the credential provider from the authentication

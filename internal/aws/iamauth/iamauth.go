@@ -1,10 +1,11 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package iamauth mints short-lived AWS RDS IAM database authentication tokens
-// and caches them per target until shortly before they expire. It is a reusable
-// helper for credential providers that authenticate to RDS/Aurora with IAM
-// (PostgreSQL today, MySQL later) — both use the same RDS token-minting flow.
+// Package iamauth provides AWS RDS IAM database authentication for the
+// configcredentials framework. It mints short-lived RDS IAM auth tokens (cached
+// per target until shortly before expiry) and exposes an "aws_iam" credentials
+// ProviderFactory that supplies those tokens as the connection secret. A future
+// MySQL receiver provider reuses the same minting flow.
 package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 
 import (
