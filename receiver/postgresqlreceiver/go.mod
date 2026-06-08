@@ -8,7 +8,6 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lib/pq v1.12.3
-	github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth v0.0.0-00010101000000-000000000000
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery v0.153.0
@@ -47,21 +46,6 @@ require (
 	github.com/DataDog/datadog-go/v5 v5.8.3 // indirect
 	github.com/DataDog/go-sqllexer v0.1.12 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.41.10 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.32.21 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.20 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.26 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.26 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.27 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.26 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.1.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.31.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.43.0 // indirect
-	github.com/aws/smithy-go v1.26.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
@@ -161,9 +145,9 @@ replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => 
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery => ../../internal/sqlquery
 
-// DEV-ONLY: configcredentials is not yet released in a tagged core version. This
-// local-path replace bridges it for development. REMOVE before opening a contrib
-// PR — a committed local-path replace is not mergeable.
-replace go.opentelemetry.io/collector/config/configcredentials => ../../../opentelemetry-collector/config/configcredentials
-
-replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth => ../../internal/aws/iamauth
+// configcredentials is not yet released in a tagged core version. Until it is,
+// redirect it to the fork branch (XSAM/opentelemetry-collector @
+// feat/configcredentials) so this branch builds standalone for evaluation. REMOVE
+// before opening an upstream contrib PR — it depends on the core package landing
+// and releasing first.
+replace go.opentelemetry.io/collector/config/configcredentials => github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23

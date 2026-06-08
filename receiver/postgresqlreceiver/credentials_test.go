@@ -5,11 +5,13 @@ package postgresqlreceiver
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 )
@@ -81,62 +83,84 @@ func TestConnectionString_PullRefreshOnRebuild(t *testing.T) {
 	assert.Contains(t, cs2, "password=token-v2")
 }
 
-func TestConfigValidate_PasswordAndAuthMutuallyExclusive(t *testing.T) {
+func TestConfigValidate_PasswordAndCredentialsMutuallyExclusive(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
 	cfg.Password = "static"
-	cfg.Authentication = configcredentials.Authentication{
+	cfg.Credentials = configcredentials.Config{
 		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
 	err := cfg.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), ErrPasswordAndAuth)
+	assert.Contains(t, err.Error(), ErrPasswordAndCredentials)
 }
 
-func TestConfigValidate_AuthWithoutPasswordIsValid(t *testing.T) {
+func TestConfigValidate_CredentialsWithoutPasswordIsValid(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.Authentication = configcredentials.Authentication{
+	cfg.Credentials = configcredentials.Config{
 		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
 	require.NoError(t, cfg.Validate(), "an authentication block satisfies the credential requirement without a password")
 }
 
-func TestResolveCredentialProvider_BuildsFromOperatorConfig(t *testing.T) {
-	// The operator supplies the provider's mint inputs (endpoint, db_user) inline;
-	// the receiver does not inject them, staying agnostic to the provider schema.
-	cfg := createDefaultConfig().(*Config)
-	cfg.Endpoint = "db.example.com:5432"
-	cfg.Username = "monitor"
-	cfg.Authentication = configcredentials.Authentication{
-		ProviderConfigs: map[string]any{"aws_iam": map[string]any{
-			"region":   "us-east-1",
-			"endpoint": "db.example.com:5432",
-			"db_user":  "monitor",
-		}},
-	}
+// fakeCredExtension is a minimal credentials-provider extension for tests: it
+// lives in a host extension map and builds a provider from inline config, without
+// importing the real aws_iam package.
+type fakeCredExtension struct{}
 
-	p, err := cfg.resolveCredentialProvider()
-	require.NoError(t, err)
-	require.NotNil(t, p, "a fully-configured authentication block yields a provider")
+func (fakeCredExtension) Start(context.Context, component.Host) error { return nil }
+func (fakeCredExtension) Shutdown(context.Context) error              { return nil }
+func (fakeCredExtension) CreateDefaultConfig() component.Config       { return &fakeCredConfig{} }
+
+func (fakeCredExtension) CreateProvider(_ configcredentials.ProviderSettings, cfg component.Config) (configcredentials.Provider, error) {
+	c := cfg.(*fakeCredConfig)
+	if c.Region == "" {
+		return nil, errors.New("fake: region required")
+	}
+	return &staticProvider{secret: "fake-token"}, nil
 }
 
-func TestResolveCredentialProvider_MissingMintInputsErrors(t *testing.T) {
-	// Without the provider's required inputs, resolve fails — the receiver does not
-	// silently fill them in.
+type fakeCredConfig struct {
+	Region string `mapstructure:"region"`
+}
+
+func credExtMap() map[component.ID]component.Component {
+	return map[component.ID]component.Component{
+		component.MustNewID("aws_iam"): fakeCredExtension{},
+	}
+}
+
+func TestResolveCredentialProvider_BuildsFromHostExtension(t *testing.T) {
+	// The auth-type key matches a declared extension in the host map; the inline
+	// config is unmarshaled into it and a provider is built.
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
-	cfg.Authentication = configcredentials.Authentication{
+	cfg.Credentials = configcredentials.Config{
 		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
-	_, err := cfg.resolveCredentialProvider()
-	require.Error(t, err, "aws_iam requires endpoint and db_user from the operator")
+	p, err := cfg.resolveCredentialProvider(credExtMap())
+	require.NoError(t, err)
+	require.NotNil(t, p, "a matching declared extension yields a provider")
+}
+
+func TestResolveCredentialProvider_NoMatchingExtension(t *testing.T) {
+	// The auth-type key names an extension that is not declared in the host map.
+	cfg := createDefaultConfig().(*Config)
+	cfg.Endpoint = "db.example.com:5432"
+	cfg.Username = "monitor"
+	cfg.Credentials = configcredentials.Config{
+		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
+	}
+
+	_, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{})
+	require.Error(t, err, "no declared extension matches the auth-type key")
 }
 
 func TestResolveCredentialProvider_NoAuthReturnsNil(t *testing.T) {
@@ -145,7 +169,7 @@ func TestResolveCredentialProvider_NoAuthReturnsNil(t *testing.T) {
 	cfg.Username = "u"
 	cfg.Password = "pw"
 
-	p, err := cfg.resolveCredentialProvider()
+	p, err := cfg.resolveCredentialProvider(credExtMap())
 	require.NoError(t, err)
 	assert.Nil(t, p, "no authentication block means no provider; the static password is used")
 }
@@ -154,7 +178,7 @@ func TestNewPoolClientFactory_RefusesAuth(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.Authentication = configcredentials.Authentication{
+	cfg.Credentials = configcredentials.Config{
 		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 

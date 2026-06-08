@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tj/assert"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver/receivertest"
 	"go.uber.org/zap"
@@ -39,8 +40,7 @@ func TestUnsuccessfulScrape(t *testing.T) {
 	cfg := factory.CreateDefaultConfig().(*Config)
 	cfg.Endpoint = "fake:11111"
 
-	clientFactory, err := newDefaultClientFactory(cfg)
-	require.NoError(t, err)
+	clientFactory := newDefaultClientFactory(cfg)
 	scraper := newPostgreSQLScraper(receivertest.NewNopSettings(metadata.Type), cfg, clientFactory, newCache(1), newTTLCache[string](1, time.Second))
 
 	actualMetrics, err := scraper.scrape(t.Context())
@@ -1000,6 +1000,9 @@ func (mockSimpleClientFactory) close() error {
 	return nil
 }
 
+// setCredentialProvider implements postgreSQLClientFactory (no-op for the mock).
+func (mockSimpleClientFactory) setCredentialProvider(configcredentials.Provider) {}
+
 // getClient implements postgreSQLClientFactory.
 func (m mockSimpleClientFactory) getClient(string) (client, error) {
 	return &postgreSQLClient{
@@ -1099,6 +1102,8 @@ func (m *mockClientFactory) close() error {
 	args := m.Called()
 	return args.Error(0)
 }
+
+func (*mockClientFactory) setCredentialProvider(configcredentials.Provider) {}
 
 func (m *mockClientFactory) initMocks(databases []string) {
 	listClient := new(mockClient)

@@ -1,3 +1,5 @@
+github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23 h1:xS+QMU3gr6HCBAuO3FL9WcouX5pOXKXWZURU5JvCOUM=
+github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23/go.mod h1:PpvxuDKIL+sieWohYb0vQuiVhrx9QhJRyK6MFlKdXCg=
 github.com/aws/aws-sdk-go-v2 v1.41.10 h1:i/Ezw+xWTo/EtO/lEq6xBYu9RXpRb3QPN5UlTsJg8Ck=
 github.com/aws/aws-sdk-go-v2 v1.41.10/go.mod h1:+HsoOEX80qAVUitj1A2DhCNTjmb3edVyuDypb6LNEeo=
 github.com/aws/aws-sdk-go-v2/config v1.32.21 h1:1i1v5jWn6iNPl7zkH4VwIXQOb+OMqMRFNjdHQeZbFVo=
@@ -82,8 +84,12 @@ go.opentelemetry.io/collector/component v1.59.0 h1:WtulkwzsdAOM/LE0cH/IiudUgiyb2
 go.opentelemetry.io/collector/component v1.59.0/go.mod h1:5eQCM0tS6qbG2XJ6Bt67kgCxuhCbg4csVv6SywyHZ6w=
 go.opentelemetry.io/collector/confmap v1.59.0 h1:asxEEiWwNuGfmTVSctYArOTF8jcxYpS4NmPtvvFhNNI=
 go.opentelemetry.io/collector/confmap v1.59.0/go.mod h1:X5SjFINrF0cb0hcM8PwnW2z+0L/pHA1H1yPPtm2j0tY=
+go.opentelemetry.io/collector/extension v1.59.0 h1:fewl/jU67OT2LePe3xNbYdMog4KruN4TZbvr0haoNFE=
+go.opentelemetry.io/collector/extension v1.59.0/go.mod h1:OPhsUCwdQ6Z8k8KXnmxTt6gmsWTBxrkIvL+/SoHiX8Y=
 go.opentelemetry.io/collector/featuregate v1.59.0 h1:pu70/9eWRjAjzGnr3VmqwY+k6fmU3esLp15AqxfBBz0=
 go.opentelemetry.io/collector/featuregate v1.59.0/go.mod h1:4ga1QBMPEejXXmpyJS8lmaRpknJ3Lb9Bvk6e420bUFU=
+go.opentelemetry.io/collector/internal/componentalias v0.153.0 h1:tr5I5hsJPJBbVPGjvOVVPPK4dLR5ZLqVEckuOfnzzMs=
+go.opentelemetry.io/collector/internal/componentalias v0.153.0/go.mod h1:tFSKiuWKJJgfxANyVnbKPVZkOF7N0bFXvCxCEgqMKuo=
 go.opentelemetry.io/collector/internal/testutil v0.153.0 h1:GJEaPLohao+7wtm08yGf73RGi1rpIHvqzxOb7Xn8sP0=
 go.opentelemetry.io/collector/internal/testutil v0.153.0/go.mod h1:Jkjs6rkqs973LqgZ0Fe3zrokQRKULYXPIf4HuqStiEE=
 go.opentelemetry.io/collector/pdata v1.59.0 h1:lO1IcaO9+HUVdFh+RATCUG3oTP+uCZzsE7HJ0MjmzRc=

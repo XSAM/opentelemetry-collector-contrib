@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/lib/pq"
+	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.uber.org/multierr"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
@@ -16,16 +17,21 @@ import (
 
 type postgreSQLClientFactory interface {
 	getClient(database string) (client, error)
+	// setCredentialProvider injects the credential provider resolved from the host
+	// extension map at Start. Nil means no credentials block (static password).
+	setCredentialProvider(configcredentials.Provider)
 	close() error
 }
 
 // newClientFactory selects the pool or default client factory based on the
-// connection-pool feature gate, resolving the credential provider in the process.
+// connection-pool feature gate. The credential provider (if any) is resolved from
+// the host extension map later, at scraper Start, and injected via
+// setCredentialProvider — the host is not available at receiver-create time.
 func newClientFactory(cfg *Config) (postgreSQLClientFactory, error) {
 	if metadata.ReceiverPostgresqlConnectionPoolFeatureGate.IsEnabled() {
 		return newPoolClientFactory(cfg)
 	}
-	return newDefaultClientFactory(cfg)
+	return newDefaultClientFactory(cfg), nil
 }
 
 // defaultClientFactory creates one PG connection per call
@@ -33,20 +39,19 @@ type defaultClientFactory struct {
 	baseConfig postgreSQLConfig
 }
 
-func newDefaultClientFactory(cfg *Config) (*defaultClientFactory, error) {
-	provider, err := cfg.resolveCredentialProvider()
-	if err != nil {
-		return nil, err
-	}
+func newDefaultClientFactory(cfg *Config) *defaultClientFactory {
 	return &defaultClientFactory{
 		baseConfig: postgreSQLConfig{
-			username:           cfg.Username,
-			password:           string(cfg.Password),
-			address:            cfg.AddrConfig,
-			tls:                cfg.ClientConfig,
-			credentialProvider: provider,
+			username: cfg.Username,
+			password: string(cfg.Password),
+			address:  cfg.AddrConfig,
+			tls:      cfg.ClientConfig,
 		},
-	}, nil
+	}
+}
+
+func (d *defaultClientFactory) setCredentialProvider(p configcredentials.Provider) {
+	d.baseConfig.credentialProvider = p
 }
 
 func (d *defaultClientFactory) getClient(database string) (client, error) {
@@ -76,8 +81,8 @@ func newPoolClientFactory(cfg *Config) (*poolClientFactory, error) {
 	// expiring token (e.g. AWS IAM, ~15m) would go stale. Until pooled refresh is
 	// implemented, refuse the combination rather than silently serving stale
 	// credentials (R11a).
-	if !cfg.Authentication.IsEmpty() {
-		return nil, errors.New("invalid config: the connection_pool feature gate is not supported with an 'authentication' block, because pooled connections would not refresh an expiring credential")
+	if !cfg.Credentials.IsEmpty() {
+		return nil, errors.New("invalid config: the connection_pool feature gate is not supported with a 'credentials' block, because pooled connections would not refresh an expiring credential")
 	}
 	poolCfg := cfg.ConnectionPool
 	return &poolClientFactory{
@@ -92,6 +97,11 @@ func newPoolClientFactory(cfg *Config) (*poolClientFactory, error) {
 		closed:     false,
 	}, nil
 }
+
+// setCredentialProvider is a no-op: the pool factory refuses a credentials
+// block at construction (see newPoolClientFactory), so it never receives a
+// provider.
+func (*poolClientFactory) setCredentialProvider(configcredentials.Provider) {}
 
 func (p *poolClientFactory) getClient(database string) (client, error) {
 	p.Lock()

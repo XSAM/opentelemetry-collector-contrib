@@ -9,6 +9,7 @@ import (
 	"net"
 	"time"
 
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configopaque"
@@ -16,7 +17,6 @@ import (
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/multierr"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
 
@@ -28,7 +28,7 @@ const (
 	ErrTransportsSupported = "invalid config: 'transport' must be 'tcp' or 'unix'"
 	ErrHostPort            = "invalid config: 'endpoint' must be in the form <host>:<port> no matter what 'transport' is configured"
 	// #nosec G101 - not hardcoded credentials
-	ErrPasswordAndAuth = "invalid config: set either 'password' or 'authentication', not both"
+	ErrPasswordAndCredentials = "invalid config: set either 'password' or 'credentials', not both"
 )
 
 type TopQueryCollection struct {
@@ -52,15 +52,15 @@ type Config struct {
 	scraperhelper.ControllerConfig `mapstructure:",squash"`
 	Username                       string              `mapstructure:"username"`
 	Password                       configopaque.String `mapstructure:"password"`
-	// Authentication optionally sources the connection credential from a
-	// credentials provider (e.g. AWS IAM) instead of a static password. When set,
-	// the provider supplies the password at connection-open time. Mutually
-	// exclusive with the top-level password field.
-	Authentication                configcredentials.Authentication `mapstructure:"authentication,omitempty"`
-	Databases                     []string                         `mapstructure:"databases"`
-	ExcludeDatabases              []string                         `mapstructure:"exclude_databases"`
-	confignet.AddrConfig          `mapstructure:",squash"`         // provides Endpoint and Transport
-	configtls.ClientConfig        `mapstructure:"tls,omitempty"`   // provides SSL details
+	// Credentials optionally sources the connection credential from a credentials
+	// provider extension (e.g. AWS IAM) instead of a static password. When set, the
+	// provider supplies the password at connection-open time. Mutually exclusive
+	// with the top-level password field.
+	Credentials                   configcredentials.Config       `mapstructure:"credentials,omitempty"`
+	Databases                     []string                       `mapstructure:"databases"`
+	ExcludeDatabases              []string                       `mapstructure:"exclude_databases"`
+	confignet.AddrConfig          `mapstructure:",squash"`       // provides Endpoint and Transport
+	configtls.ClientConfig        `mapstructure:"tls,omitempty"` // provides SSL details
 	ConnectionPool                `mapstructure:"connection_pool,omitempty"`
 	metadata.MetricsBuilderConfig `mapstructure:",squash"`
 	metadata.LogsBuilderConfig    `mapstructure:",squash"`
@@ -81,21 +81,21 @@ func (cfg *Config) Validate() error {
 		err = multierr.Append(err, errors.New(ErrNoUsername))
 	}
 
-	// Credential source precedence (R12): a static password and an authentication
-	// block are mutually exclusive. A username alongside an authentication block is
-	// expected — the provider may use it as a mint input. When an authentication
-	// block is configured, the password is supplied by the provider, so the
-	// top-level password is not required.
-	authConfigured := !cfg.Authentication.IsEmpty()
+	// Credential source precedence (R12): a static password and a credentials
+	// block are mutually exclusive. A username alongside a credentials block is
+	// expected — the provider may use it as a mint input. When a credentials block
+	// is configured, the password is supplied by the provider, so the top-level
+	// password is not required.
+	credsConfigured := !cfg.Credentials.IsEmpty()
 	switch {
-	case authConfigured && cfg.Password != "":
-		err = multierr.Append(err, errors.New(ErrPasswordAndAuth))
-	case !authConfigured && cfg.Password == "":
+	case credsConfigured && cfg.Password != "":
+		err = multierr.Append(err, errors.New(ErrPasswordAndCredentials))
+	case !credsConfigured && cfg.Password == "":
 		err = multierr.Append(err, errors.New(ErrNoPassword))
 	}
-	if authConfigured {
-		if authErr := cfg.Authentication.Validate(); authErr != nil {
-			err = multierr.Append(err, authErr)
+	if credsConfigured {
+		if credsErr := cfg.Credentials.Validate(); credsErr != nil {
+			err = multierr.Append(err, credsErr)
 		}
 	}
 
@@ -123,22 +123,17 @@ func (cfg *Config) Validate() error {
 	return err
 }
 
-// credentialProviderFactories is the set of credential providers this receiver
-// supports under its authentication block. Supplied as an explicit slice — there
-// is no global registration.
-func credentialProviderFactories() []configcredentials.ProviderFactory {
-	return []configcredentials.ProviderFactory{iamauth.NewFactory()}
-}
-
-// resolveCredentialProvider builds the credential provider from the authentication
-// block, or returns (nil, nil) when no authentication block is configured (the
-// receiver then uses its static password). Provider-specific inputs (such as the
-// AWS IAM provider's endpoint and db_user) come from the operator's inline
-// provider config — the receiver does not inject them, keeping it agnostic to any
-// provider's config schema.
-func (cfg *Config) resolveCredentialProvider() (configcredentials.Provider, error) {
-	if cfg.Authentication.IsEmpty() {
+// resolveCredentialProvider builds the credential provider from the credentials
+// block by finding the matching credentials-provider extension in the host
+// extension map, or returns (nil, nil) when no credentials block is configured
+// (the receiver then uses its static password). The receiver imports no provider
+// packages and supplies no factory list — the provider type is discovered from the
+// declared extensions. Provider-specific inputs (such as the AWS IAM provider's
+// endpoint and db_user) come from the operator's inline provider config, keeping
+// the receiver agnostic to any provider's config schema.
+func (cfg *Config) resolveCredentialProvider(extensions map[component.ID]component.Component) (configcredentials.Provider, error) {
+	if cfg.Credentials.IsEmpty() {
 		return nil, nil
 	}
-	return cfg.Authentication.Resolve(configcredentials.ProviderSettings{}, credentialProviderFactories())
+	return cfg.Credentials.Resolve(configcredentials.ProviderSettings{}, extensions)
 }

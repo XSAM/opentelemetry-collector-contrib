@@ -223,8 +223,7 @@ func TestScrapeLogsFromContainer(t *testing.T) {
 			return cfg
 		}(),
 	}
-	clientFactory, err := newDefaultClientFactory(&cfg)
-	require.NoError(t, err)
+	clientFactory := newDefaultClientFactory(&cfg)
 
 	ns := newPostgreSQLScraper(receiver.Settings{
 		TelemetrySettings: component.TelemetrySettings{

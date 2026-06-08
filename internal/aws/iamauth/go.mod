@@ -10,14 +10,17 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/collector/component v1.59.0
-	go.opentelemetry.io/collector/config/configcredentials v0.0.0-00010101000000-000000000000
+	go.opentelemetry.io/collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23
+	go.opentelemetry.io/collector/extension v1.59.0
 	go.uber.org/goleak v1.3.0
 )
 
-// configcredentials is not yet released in a tagged core version; bridge to the
-// local core checkout for development. REMOVE before opening a contrib PR — a
-// committed local-path replace is not mergeable.
-replace go.opentelemetry.io/collector/config/configcredentials => ../../../../opentelemetry-collector/config/configcredentials
+// configcredentials is not yet released in a tagged core version. Until it is,
+// redirect it to the fork branch (XSAM/opentelemetry-collector @
+// feat/configcredentials) so this branch builds standalone for evaluation. REMOVE
+// before opening an upstream contrib PR — it depends on the core package landing
+// and releasing first.
+replace go.opentelemetry.io/collector/config/configcredentials => github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23
 
 require (
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
@@ -46,6 +49,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opentelemetry.io/collector/confmap v1.59.0 // indirect
 	go.opentelemetry.io/collector/featuregate v1.59.0 // indirect
+	go.opentelemetry.io/collector/internal/componentalias v0.153.0 // indirect
 	go.opentelemetry.io/collector/pdata v1.59.0 // indirect
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect

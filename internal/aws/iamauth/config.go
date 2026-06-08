@@ -7,7 +7,7 @@ import "errors"
 
 // Config is the inline sub-config for the aws_iam credentials provider:
 //
-//	authentication:
+//	credentials:
 //	  aws_iam:
 //	    region: us-east-1
 //	    role_arn: arn:aws:iam::123456789012:role/db-access  # optional

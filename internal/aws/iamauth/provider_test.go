@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/config/configcredentials"
+	"go.opentelemetry.io/collector/extension"
 )
 
 // fakeMinter records calls and returns a canned token without touching AWS.
@@ -37,33 +38,55 @@ func newProviderWithMinter(c *Config, m tokenMinter) *provider {
 	}
 }
 
-func TestFactory_TypeAndDefaultConfig(t *testing.T) {
-	f := NewFactory()
-	assert.Equal(t, "aws_iam", f.Type())
-	_, ok := f.CreateDefaultConfig().(*Config)
-	assert.True(t, ok, "default config is *Config")
+// newProviderFactory creates the extension and asserts it implements
+// ProviderFactory — the dual role consumers depend on.
+func newProviderFactory(t *testing.T) configcredentials.ProviderFactory {
+	t.Helper()
+	ext, err := createExtension(context.Background(), extension.Settings{}, &extensionConfig{})
+	require.NoError(t, err)
+	pf, ok := ext.(configcredentials.ProviderFactory)
+	require.True(t, ok, "the aws_iam extension must implement configcredentials.ProviderFactory")
+	return pf
 }
 
-func TestFactory_CreateProvider_ValidatesConfig(t *testing.T) {
+func TestFactory_TypeAndStability(t *testing.T) {
 	f := NewFactory()
+	assert.Equal(t, "aws_iam", f.Type().String())
+}
+
+func TestExtension_DefaultProviderConfig(t *testing.T) {
+	pf := newProviderFactory(t)
+	_, ok := pf.CreateDefaultConfig().(*Config)
+	assert.True(t, ok, "default provider config is *Config")
+}
+
+func TestExtension_CreateProvider_ValidatesConfig(t *testing.T) {
+	pf := newProviderFactory(t)
 	// Missing region/endpoint/db_user must fail Validate.
-	_, err := f.CreateProvider(configcredentials.ProviderSettings{}, &Config{})
+	_, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{})
 	require.ErrorIs(t, err, errNoRegion)
 
-	_, err = f.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1"})
+	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1"})
 	require.ErrorIs(t, err, errNoEndpoint)
 
-	_, err = f.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1", Endpoint: "db:5432"})
+	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1", Endpoint: "db:5432"})
 	require.ErrorIs(t, err, errNoDBUser)
 }
 
-func TestFactory_CreateProvider_BuildsProvider(t *testing.T) {
-	f := NewFactory()
-	p, err := f.CreateProvider(configcredentials.ProviderSettings{}, &Config{
+func TestExtension_CreateProvider_BuildsProvider(t *testing.T) {
+	pf := newProviderFactory(t)
+	p, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{
 		Region: "us-east-1", Endpoint: "db:5432", DBUser: "monitor",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, p)
+}
+
+func TestExtension_StartShutdownNoop(t *testing.T) {
+	ext, err := createExtension(context.Background(), extension.Settings{}, &extensionConfig{})
+	require.NoError(t, err)
+	require.NoError(t, ext.Start(context.Background(), nil))
+	require.NoError(t, ext.Shutdown(context.Background()))
 }
 
 func TestProvider_GetCredential(t *testing.T) {
