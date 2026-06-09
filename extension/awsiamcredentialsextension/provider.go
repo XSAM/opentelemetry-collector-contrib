@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
+package awsiamcredentialsextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension"
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/collector/config/configcredentials"
 )
 
-// tokenMinter is the subset of *Minter the provider uses. Defined as an interface
+// tokenMinter is the subset of *minter the provider uses. Defined as an interface
 // so tests inject a fake without touching AWS.
 type tokenMinter interface {
-	Token(ctx context.Context, t Target) (token string, notAfter time.Time, err error)
+	Token(ctx context.Context, t target) (token string, notAfter time.Time, err error)
 }
 
 // provider implements configcredentials.Provider for AWS RDS IAM authentication.
@@ -21,7 +21,7 @@ type tokenMinter interface {
 // provider embeds NopWatcher to satisfy Watch with a no-op.
 type provider struct {
 	configcredentials.NopWatcher
-	target Target
+	target target
 	minter tokenMinter
 }
 

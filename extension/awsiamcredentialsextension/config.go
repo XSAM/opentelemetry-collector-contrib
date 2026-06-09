@@ -1,11 +1,11 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
+package awsiamcredentialsextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension"
 
 import "errors"
 
-// Config is the inline sub-config for the aws_iam credentials provider:
+// providerConfig is the inline sub-config for the aws_iam credentials provider:
 //
 //	credentials:
 //	  aws_iam:
@@ -15,7 +15,7 @@ import "errors"
 // Endpoint and DBUser are mint inputs the provider needs but that a consumer
 // already knows (its own endpoint and configured username). A receiver populates
 // them into this sub-config before resolving, so operators do not repeat them.
-type Config struct {
+type providerConfig struct {
 	// Region is the AWS region of the database. Required.
 	Region string `mapstructure:"region"`
 
@@ -41,7 +41,7 @@ var (
 )
 
 // Validate checks the required mint inputs are present.
-func (c *Config) Validate() error {
+func (c *providerConfig) Validate() error {
 	if c.Region == "" {
 		return errNoRegion
 	}

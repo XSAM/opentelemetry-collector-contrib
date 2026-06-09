@@ -1,12 +1,13 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package iamauth provides AWS RDS IAM database authentication for the
-// configcredentials framework. It mints short-lived RDS IAM auth tokens (cached
-// per target until shortly before expiry) and exposes an "aws_iam" credentials
-// ProviderFactory that supplies those tokens as the connection secret. A future
-// MySQL receiver provider reuses the same minting flow.
-package iamauth // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth"
+// Package awsiamcredentialsextension provides AWS RDS IAM database authentication
+// for the config/configcredentials framework. It is a config-less Collector
+// extension that also implements configcredentials.ProviderFactory: it mints
+// short-lived RDS IAM auth tokens (cached per target until shortly before expiry)
+// and supplies them as the connection secret. Receivers discover it via the host
+// extension map and build a Provider from their own inline credentials config.
+package awsiamcredentialsextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension"
 
 import (
 	"context"
@@ -30,9 +31,9 @@ const rdsTokenLifetime = 15 * time.Minute
 // in-flight dial time). ~30% of the 15-minute lifetime.
 const refreshMargin = 5 * time.Minute
 
-// Target identifies what a token is minted for. Tokens are cached per Target, so
+// target identifies what a token is minted for. Tokens are cached per target, so
 // two connections that differ only by RoleARN do not share a token.
-type Target struct {
+type target struct {
 	// Endpoint is the RDS endpoint in host:port form.
 	Endpoint string
 	// Region is the AWS region of the database.
@@ -44,15 +45,15 @@ type Target struct {
 }
 
 // tokenBuilder mints a token for a target. Injectable so tests run without AWS.
-type tokenBuilder func(ctx context.Context, t Target) (string, error)
+type tokenBuilder func(ctx context.Context, t target) (string, error)
 
-// Minter mints and caches RDS IAM auth tokens. It is safe for concurrent use.
-type Minter struct {
+// minter mints and caches RDS IAM auth tokens. It is safe for concurrent use.
+type minter struct {
 	build tokenBuilder
 	now   func() time.Time
 
 	mu    sync.Mutex
-	cache map[Target]cachedToken
+	cache map[target]cachedToken
 }
 
 type cachedToken struct {
@@ -60,20 +61,20 @@ type cachedToken struct {
 	notAfter time.Time
 }
 
-// NewMinter returns a Minter that mints real RDS IAM tokens via the AWS SDK,
+// newMinter returns a minter that mints real RDS IAM tokens via the AWS SDK,
 // using the default credential chain (ECS task role, EC2 instance profile, IRSA).
-func NewMinter() *Minter {
-	return &Minter{
+func newMinter() *minter {
+	return &minter{
 		build: buildRDSToken,
 		now:   time.Now,
-		cache: make(map[Target]cachedToken),
+		cache: make(map[target]cachedToken),
 	}
 }
 
 // Token returns a currently-valid auth token for the target, minting a new one
 // when there is no cached token or the cached token is within the refresh margin
 // of expiry. It returns the token and the time after which it expires.
-func (m *Minter) Token(ctx context.Context, t Target) (token string, notAfter time.Time, err error) {
+func (m *minter) Token(ctx context.Context, t target) (token string, notAfter time.Time, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -83,7 +84,7 @@ func (m *Minter) Token(ctx context.Context, t Target) (token string, notAfter ti
 
 	tok, err := m.build(ctx, t)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("iamauth: mint RDS token for %q: %w", t.Endpoint, err)
+		return "", time.Time{}, fmt.Errorf("aws_iam: mint RDS token for %q: %w", t.Endpoint, err)
 	}
 	exp := m.now().Add(rdsTokenLifetime)
 	m.cache[t] = cachedToken{token: tok, notAfter: exp}
@@ -92,7 +93,7 @@ func (m *Minter) Token(ctx context.Context, t Target) (token string, notAfter ti
 
 // buildRDSToken is the production tokenBuilder: it resolves AWS credentials from
 // the default chain (optionally assuming RoleARN) and calls the RDS auth helper.
-func buildRDSToken(ctx context.Context, t Target) (string, error) {
+func buildRDSToken(ctx context.Context, t target) (string, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(t.Region))
 	if err != nil {
 		return "", fmt.Errorf("load AWS config: %w", err)

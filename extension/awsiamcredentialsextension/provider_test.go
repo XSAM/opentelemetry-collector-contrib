@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package iamauth
+package awsiamcredentialsextension
 
 import (
 	"context"
@@ -22,19 +22,19 @@ type fakeMinter struct {
 	notAfter time.Time
 	err      error
 	calls    int64
-	lastTgt  Target
+	lastTgt  target
 }
 
-func (f *fakeMinter) Token(_ context.Context, t Target) (string, time.Time, error) {
+func (f *fakeMinter) Token(_ context.Context, t target) (string, time.Time, error) {
 	atomic.AddInt64(&f.calls, 1)
 	f.lastTgt = t
 	return f.token, f.notAfter, f.err
 }
 
-func newProviderWithMinter(c *Config, m tokenMinter) *provider {
+func newProviderWithMinter(c *providerConfig, m tokenMinter) *provider {
 	return &provider{
 		minter: m,
-		target: Target{Endpoint: c.Endpoint, Region: c.Region, DBUser: c.DBUser, RoleARN: c.RoleARN},
+		target: target{Endpoint: c.Endpoint, Region: c.Region, DBUser: c.DBUser, RoleARN: c.RoleARN},
 	}
 }
 
@@ -42,7 +42,7 @@ func newProviderWithMinter(c *Config, m tokenMinter) *provider {
 // ProviderFactory — the dual role consumers depend on.
 func newProviderFactory(t *testing.T) configcredentials.ProviderFactory {
 	t.Helper()
-	ext, err := createExtension(context.Background(), extension.Settings{}, &extensionConfig{})
+	ext, err := createExtension(context.Background(), extension.Settings{}, &Config{})
 	require.NoError(t, err)
 	pf, ok := ext.(configcredentials.ProviderFactory)
 	require.True(t, ok, "the aws_iam extension must implement configcredentials.ProviderFactory")
@@ -56,26 +56,26 @@ func TestFactory_TypeAndStability(t *testing.T) {
 
 func TestExtension_DefaultProviderConfig(t *testing.T) {
 	pf := newProviderFactory(t)
-	_, ok := pf.CreateDefaultConfig().(*Config)
-	assert.True(t, ok, "default provider config is *Config")
+	_, ok := pf.CreateDefaultConfig().(*providerConfig)
+	assert.True(t, ok, "default provider config is *providerConfig")
 }
 
 func TestExtension_CreateProvider_ValidatesConfig(t *testing.T) {
 	pf := newProviderFactory(t)
 	// Missing region/endpoint/db_user must fail Validate.
-	_, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{})
+	_, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &providerConfig{})
 	require.ErrorIs(t, err, errNoRegion)
 
-	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1"})
+	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &providerConfig{Region: "us-east-1"})
 	require.ErrorIs(t, err, errNoEndpoint)
 
-	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{Region: "us-east-1", Endpoint: "db:5432"})
+	_, err = pf.CreateProvider(configcredentials.ProviderSettings{}, &providerConfig{Region: "us-east-1", Endpoint: "db:5432"})
 	require.ErrorIs(t, err, errNoDBUser)
 }
 
 func TestExtension_CreateProvider_BuildsProvider(t *testing.T) {
 	pf := newProviderFactory(t)
-	p, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &Config{
+	p, err := pf.CreateProvider(configcredentials.ProviderSettings{}, &providerConfig{
 		Region: "us-east-1", Endpoint: "db:5432", DBUser: "monitor",
 	})
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestExtension_CreateProvider_BuildsProvider(t *testing.T) {
 }
 
 func TestExtension_StartShutdownNoop(t *testing.T) {
-	ext, err := createExtension(context.Background(), extension.Settings{}, &extensionConfig{})
+	ext, err := createExtension(context.Background(), extension.Settings{}, &Config{})
 	require.NoError(t, err)
 	require.NoError(t, ext.Start(context.Background(), nil))
 	require.NoError(t, ext.Shutdown(context.Background()))
@@ -92,7 +92,7 @@ func TestExtension_StartShutdownNoop(t *testing.T) {
 func TestProvider_GetCredential(t *testing.T) {
 	exp := time.Unix(2000, 0)
 	m := &fakeMinter{token: "rds-token", notAfter: exp}
-	c := &Config{Region: "us-east-1", Endpoint: "db:5432", DBUser: "monitor", RoleARN: "arn:role"}
+	c := &providerConfig{Region: "us-east-1", Endpoint: "db:5432", DBUser: "monitor", RoleARN: "arn:role"}
 	p := newProviderWithMinter(c, m)
 
 	cred, err := p.GetCredential(context.Background())
@@ -102,20 +102,20 @@ func TestProvider_GetCredential(t *testing.T) {
 	assert.Equal(t, "rds-token", cred.Secret)
 	require.NotNil(t, cred.NotAfter)
 	assert.Equal(t, exp, *cred.NotAfter)
-	// Target (incl. role_arn) is threaded to the minter.
-	assert.Equal(t, Target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor", RoleARN: "arn:role"}, m.lastTgt)
+	// target (incl. role_arn) is threaded to the minter.
+	assert.Equal(t, target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor", RoleARN: "arn:role"}, m.lastTgt)
 }
 
 func TestProvider_GetCredential_MintError(t *testing.T) {
 	sentinel := errors.New("mint failed")
-	p := newProviderWithMinter(&Config{}, &fakeMinter{err: sentinel})
+	p := newProviderWithMinter(&providerConfig{}, &fakeMinter{err: sentinel})
 	_, err := p.GetCredential(context.Background())
 	require.ErrorIs(t, err, sentinel)
 }
 
 func TestProvider_WatchIsNoop(t *testing.T) {
 	// Embedded NopWatcher: Watch registers successfully and never fires.
-	var p configcredentials.Provider = newProviderWithMinter(&Config{}, &fakeMinter{})
+	var p configcredentials.Provider = newProviderWithMinter(&providerConfig{}, &fakeMinter{})
 	called := false
 	stop, err := p.Watch(context.Background(), func(*configcredentials.Credential) { called = true })
 	require.NoError(t, err)

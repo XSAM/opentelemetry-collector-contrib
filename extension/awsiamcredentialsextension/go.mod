@@ -1,4 +1,4 @@
-module github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/iamauth
+module github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension
 
 go 1.25.0
 
@@ -14,13 +14,6 @@ require (
 	go.opentelemetry.io/collector/extension v1.59.0
 	go.uber.org/goleak v1.3.0
 )
-
-// configcredentials is not yet released in a tagged core version. Until it is,
-// redirect it to the fork branch (XSAM/opentelemetry-collector @
-// feat/configcredentials) so this branch builds standalone for evaluation. REMOVE
-// before opening an upstream contrib PR — it depends on the core package landing
-// and releasing first.
-replace go.opentelemetry.io/collector/config/configcredentials => github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23
 
 require (
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
@@ -59,3 +52,10 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// configcredentials is not yet released in a tagged core version. Until it is,
+// redirect it to the fork branch (XSAM/opentelemetry-collector @
+// feat/configcredentials) so this branch builds standalone for evaluation. REMOVE
+// before opening an upstream contrib PR — it depends on the core package landing
+// and releasing first.
+replace go.opentelemetry.io/collector/config/configcredentials => github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23
