@@ -2,6 +2,7 @@ cmd/codecovgen
 pkg/pdatautil
 pkg/golden
 pkg/pdatatest
+pkg/config/configcredentials
 cmd/golden
 extension/internal/basicauth
 extension/internal/credentialsfile

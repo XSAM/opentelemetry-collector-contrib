@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"go.opentelemetry.io/collector/config/configcredentials"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 )
 
 // tokenMinter is the subset of *minter the provider uses. Defined as an interface

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/lib/pq"
-	"go.opentelemetry.io/collector/config/configcredentials"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.uber.org/multierr"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"

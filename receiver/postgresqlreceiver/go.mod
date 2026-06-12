@@ -11,6 +11,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/common v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery v0.153.0
+	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden v0.153.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatatest v0.153.0
 	github.com/stretchr/testify v1.11.1
@@ -18,7 +19,6 @@ require (
 	github.com/tj/assert v0.0.3
 	go.opentelemetry.io/collector/component v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/component/componenttest v0.153.1-0.20260528150546-fe2cf23ff222
-	go.opentelemetry.io/collector/config/configcredentials v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/confignet v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/configopaque v1.59.1-0.20260528150546-fe2cf23ff222
 	go.opentelemetry.io/collector/config/configtls v1.59.1-0.20260528150546-fe2cf23ff222
@@ -145,9 +145,4 @@ replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => 
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery => ../../internal/sqlquery
 
-// configcredentials is not yet released in a tagged core version. Until it is,
-// redirect it to the fork branch (XSAM/opentelemetry-collector @
-// feat/configcredentials) so this branch builds standalone for evaluation. REMOVE
-// before opening an upstream contrib PR — it depends on the core package landing
-// and releasing first.
-replace go.opentelemetry.io/collector/config/configcredentials => github.com/XSAM/opentelemetry-collector/config/configcredentials v0.0.0-20260608233206-750e1ee92e23
+replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials => ../../pkg/config/configcredentials

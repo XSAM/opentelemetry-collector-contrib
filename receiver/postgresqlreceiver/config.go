@@ -9,8 +9,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configopaque"
 	"go.opentelemetry.io/collector/config/configtls"

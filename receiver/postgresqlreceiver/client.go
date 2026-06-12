@@ -18,7 +18,7 @@ import (
 	"text/template"
 	"time"
 
-	"go.opentelemetry.io/collector/config/configcredentials"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/otel/propagation"

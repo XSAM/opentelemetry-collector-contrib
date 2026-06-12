@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/extension"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension/internal/metadata"

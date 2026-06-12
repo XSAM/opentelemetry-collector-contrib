@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 )
 
