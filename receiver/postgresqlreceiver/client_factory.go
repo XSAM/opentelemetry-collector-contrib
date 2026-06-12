@@ -4,8 +4,9 @@
 package postgresqlreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver"
 
 import (
+	"context"
 	"database/sql"
-	"errors"
+	"database/sql/driver"
 	"sync"
 
 	"github.com/lib/pq"
@@ -27,11 +28,11 @@ type postgreSQLClientFactory interface {
 // connection-pool feature gate. The credential provider (if any) is resolved from
 // the host extension map later, at scraper Start, and injected via
 // setCredentialProvider — the host is not available at receiver-create time.
-func newClientFactory(cfg *Config) (postgreSQLClientFactory, error) {
+func newClientFactory(cfg *Config) postgreSQLClientFactory {
 	if metadata.ReceiverPostgresqlConnectionPoolFeatureGate.IsEnabled() {
 		return newPoolClientFactory(cfg)
 	}
-	return newDefaultClientFactory(cfg), nil
+	return newDefaultClientFactory(cfg)
 }
 
 // defaultClientFactory creates one PG connection per call
@@ -75,15 +76,7 @@ type poolClientFactory struct {
 	closed     bool
 }
 
-func newPoolClientFactory(cfg *Config) (*poolClientFactory, error) {
-	// The connection pool caches a *sql.DB per database for the process lifetime,
-	// so a credential resolved once at pool creation would never refresh — an
-	// expiring token (e.g. AWS IAM, ~15m) would go stale. Until pooled refresh is
-	// implemented, refuse the combination rather than silently serving stale
-	// credentials (R11a).
-	if !cfg.Credentials.IsEmpty() {
-		return nil, errors.New("invalid config: the connection_pool feature gate is not supported with a 'credentials' block, because pooled connections would not refresh an expiring credential")
-	}
+func newPoolClientFactory(cfg *Config) *poolClientFactory {
 	poolCfg := cfg.ConnectionPool
 	return &poolClientFactory{
 		baseConfig: postgreSQLConfig{
@@ -95,13 +88,12 @@ func newPoolClientFactory(cfg *Config) (*poolClientFactory, error) {
 		poolConfig: &poolCfg,
 		pool:       make(map[string]*sql.DB),
 		closed:     false,
-	}, nil
+	}
 }
 
-// setCredentialProvider is a no-op: the pool factory refuses a credentials
-// block at construction (see newPoolClientFactory), so it never receives a
-// provider.
-func (*poolClientFactory) setCredentialProvider(configcredentials.Provider) {}
+func (p *poolClientFactory) setCredentialProvider(provider configcredentials.Provider) {
+	p.baseConfig.credentialProvider = provider
+}
 
 func (p *poolClientFactory) getClient(database string) (client, error) {
 	p.Lock()
@@ -110,10 +102,10 @@ func (p *poolClientFactory) getClient(database string) (client, error) {
 	if !ok {
 		var err error
 		db, err = getDB(p.baseConfig, database)
-		p.setPoolSettings(db)
 		if err != nil {
 			return nil, err
 		}
+		p.setPoolSettings(db)
 		p.pool[database] = db
 	}
 	return &postgreSQLClient{client: db, closeFn: nil}, nil
@@ -165,6 +157,14 @@ func getDB(cfg postgreSQLConfig, database string) (*sql.DB, error) {
 	if database != "" {
 		cfg.database = database
 	}
+	if cfg.credentialProvider != nil {
+		// A credential provider mints a short-lived secret (e.g. an AWS IAM token).
+		// Resolve it per physical connection rather than baking one secret into the
+		// DSN, so a long-lived pool re-mints on every new connection it opens and
+		// never dials with an expired token. credentialConnector does this inside
+		// driver.Connector.Connect, which database/sql calls per new connection.
+		return sql.OpenDB(&credentialConnector{cfg: cfg}), nil
+	}
 	connectionString, err := cfg.ConnectionString()
 	if err != nil {
 		return nil, err
@@ -175,3 +175,27 @@ func getDB(cfg postgreSQLConfig, database string) (*sql.DB, error) {
 	}
 	return sql.OpenDB(conn), nil
 }
+
+// credentialConnector is a driver.Connector that rebuilds the lib/pq DSN — and so
+// re-resolves the credential provider — every time database/sql opens a new
+// physical connection. This is what lets a pooled *sql.DB pick up a refreshed
+// credential: each new connection mints a current secret, while connections
+// already established stay valid for their lifetime (AWS RDS IAM authenticates
+// only at connection open, not per query).
+type credentialConnector struct {
+	cfg postgreSQLConfig
+}
+
+func (c *credentialConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	connectionString, err := c.cfg.connectionString(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := pq.NewConnector(connectionString)
+	if err != nil {
+		return nil, err
+	}
+	return conn.Connect(ctx)
+}
+
+func (*credentialConnector) Driver() driver.Driver { return &pq.Driver{} }

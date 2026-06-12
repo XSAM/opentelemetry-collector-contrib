@@ -190,8 +190,10 @@ type postgreSQLConfig struct {
 	tls      configtls.ClientConfig
 	// credentialProvider, when non-nil, supplies the password (and optionally the
 	// username) at connection-string-build time instead of the static password.
-	// It is resolved once per *sql.DB build, so each new connection picks up a
-	// freshly-minted credential without a collector restart.
+	// Non-pool path: resolved once per *sql.DB build (one build per scrape), so
+	// each scrape picks up a freshly-minted credential. Pool path: resolved per
+	// physical connection by credentialConnector, so a long-lived pool re-mints on
+	// every new connection it opens. Either way, no collector restart is needed.
 	credentialProvider configcredentials.Provider
 }
 
@@ -224,6 +226,14 @@ func sslConnectionString(tls configtls.ClientConfig) string {
 }
 
 func (c postgreSQLConfig) ConnectionString() (string, error) {
+	return c.connectionString(context.Background())
+}
+
+// connectionString builds the lib/pq DSN, resolving the credential provider (if
+// any) with the supplied context. The non-pool path passes a background context;
+// the pool path resolves per physical connection via credentialConnector, so the
+// scrape context flows through to credential minting.
+func (c postgreSQLConfig) connectionString(ctx context.Context) (string, error) {
 	// postgres will assume the supplied user as the database name if none is provided,
 	// so we must specify a database name even when we are just collecting the list of databases.
 	database := defaultPostgreSQLDatabase
@@ -245,7 +255,7 @@ func (c postgreSQLConfig) ConnectionString() (string, error) {
 	if c.credentialProvider != nil {
 		// Resolve the credential at build time so each new connection uses a
 		// currently-valid secret (e.g. a freshly-minted AWS IAM token).
-		cred, credErr := c.credentialProvider.GetCredential(context.Background())
+		cred, credErr := c.credentialProvider.GetCredential(ctx)
 		if credErr != nil {
 			return "", fmt.Errorf("resolve credential: %w", credErr)
 		}

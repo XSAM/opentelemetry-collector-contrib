@@ -19,9 +19,10 @@ subtext: |
   Configure under `credentials.aws_iam` (region, endpoint, db_user, optional
   role_arn), with the aws_iam credentials provider extension enabled. The token is
   minted on demand and refreshed before expiry; the receiver re-resolves it on each
-  connection build. Mutually exclusive with the static `password` field. Not
-  supported with the connection_pool feature gate. Built on the new core
-  config/configcredentials framework.
+  new connection, so it composes with the connection_pool feature gate (a pooled
+  connection re-mints when opened, never dialing with an expired token). Mutually
+  exclusive with the static `password` field. Built on the
+  pkg/config/configcredentials framework.
 
 # If your change doesn't affect end users or the exported elements of any package,
 # you should instead start your pull request title with [chore] or use the "Skip Changelog" label.

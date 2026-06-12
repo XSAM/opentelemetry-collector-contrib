@@ -6,7 +6,6 @@ package postgresqlreceiver
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
@@ -174,7 +173,11 @@ func TestResolveCredentialProvider_NoAuthReturnsNil(t *testing.T) {
 	assert.Nil(t, p, "no authentication block means no provider; the static password is used")
 }
 
-func TestNewPoolClientFactory_RefusesAuth(t *testing.T) {
+func TestNewPoolClientFactory_AcceptsCredentials(t *testing.T) {
+	// The connection pool now composes with a credentials block: the pool re-mints
+	// per physical connection via credentialConnector, so an expiring token no
+	// longer goes stale. The pool accepts an injected provider and still caches one
+	// *sql.DB per database.
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
@@ -182,7 +185,62 @@ func TestNewPoolClientFactory_RefusesAuth(t *testing.T) {
 		ProviderConfigs: map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
 	}
 
-	_, err := newPoolClientFactory(cfg)
-	require.Error(t, err, "the connection pool gate is incompatible with an expiring credential")
-	assert.True(t, strings.Contains(err.Error(), "connection_pool"))
+	f := newPoolClientFactory(cfg)
+	t.Cleanup(func() { require.NoError(t, f.close()) }) // close pooled *sql.DBs so goleak stays clean
+
+	// With a provider injected, getClient builds a *sql.DB backed by the
+	// credential-resolving connector (sql.OpenDB is lazy, so no real dial here) and
+	// caches one per database.
+	f.setCredentialProvider(&staticProvider{secret: "minted-token"})
+	c1, err := f.getClient("db1")
+	require.NoError(t, err)
+	require.NotNil(t, c1)
+	c2, err := f.getClient("db1")
+	require.NoError(t, err)
+	assert.Same(t, c1.(*postgreSQLClient).client, c2.(*postgreSQLClient).client, "the pool caches one *sql.DB per database")
+}
+
+// countingProvider counts GetCredential calls and always errors, so the
+// credentialConnector short-circuits before dialing — letting a test assert how
+// many times the credential was resolved without a live database.
+type countingProvider struct {
+	configcredentials.NopWatcher
+	calls int
+}
+
+func (p *countingProvider) GetCredential(context.Context) (*configcredentials.Credential, error) {
+	p.calls++
+	return nil, errors.New("mint failed")
+}
+
+func TestCredentialConnector_ResolvesPerConnect(t *testing.T) {
+	// Each database/sql connection-open calls Connect, which must re-resolve the
+	// credential — that is what keeps a long-lived pool from dialing with a stale
+	// token. A counting provider proves one resolution per Connect.
+	p := &countingProvider{}
+	cfg := baseConfigWithProvider(p)
+	conn := &credentialConnector{cfg: cfg}
+
+	_, err1 := conn.Connect(context.Background())
+	require.Error(t, err1, "the provider errors, surfaced before any dial")
+	_, err2 := conn.Connect(context.Background())
+	require.Error(t, err2)
+
+	assert.Equal(t, 2, p.calls, "the credential is resolved once per Connect, not once per pool")
+}
+
+func TestCredentialConnector_PerConnectionRefresh(t *testing.T) {
+	// A rotated secret must reach the next connection's DSN without rebuilding the
+	// pool — the per-connect resolution in connectionString(ctx) is what delivers it.
+	p := &staticProvider{secret: "token-v1"}
+	cfg := baseConfigWithProvider(p)
+
+	cs1, err := cfg.connectionString(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, cs1, "password=token-v1")
+
+	p.secret = "token-v2"
+	cs2, err := cfg.connectionString(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, cs2, "password=token-v2", "the next connection picks up the rotated secret")
 }
