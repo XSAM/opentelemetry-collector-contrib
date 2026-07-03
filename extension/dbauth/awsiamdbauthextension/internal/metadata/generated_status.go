@@ -10,7 +10,7 @@ import (
 
 var (
 	Type      = component.MustNewType("aws_iam")
-	ScopeName = "github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension"
+	ScopeName = "github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth/awsiamdbauthextension"
 )
 
 const (

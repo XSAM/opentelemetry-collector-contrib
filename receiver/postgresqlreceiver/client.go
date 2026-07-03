@@ -18,7 +18,6 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/otel/propagation"
@@ -27,6 +26,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/sqlquery"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
@@ -194,7 +194,11 @@ type postgreSQLConfig struct {
 	// each scrape picks up a freshly-minted credential. Pool path: resolved per
 	// physical connection by credentialConnector, so a long-lived pool re-mints on
 	// every new connection it opens. Either way, no collector restart is needed.
-	credentialProvider configcredentials.Provider
+	credentialProvider dbauth.Provider
+	// credentialArgs is the receiver's inline db_auth override for the provider,
+	// passed verbatim to every GetCredential call so the provider merges it over
+	// its own defaults for this receiver. Nil when no override was configured.
+	credentialArgs map[string]any
 }
 
 func sslConnectionString(tls configtls.ClientConfig) string {
@@ -255,7 +259,10 @@ func (c postgreSQLConfig) connectionString(ctx context.Context) (string, error) 
 	if c.credentialProvider != nil {
 		// Resolve the credential at build time so each new connection uses a
 		// currently-valid secret (e.g. a freshly-minted AWS IAM token).
-		cred, credErr := c.credentialProvider.GetCredential(ctx)
+		cred, credErr := c.credentialProvider.GetCredential(ctx, dbauth.Request{
+			Endpoint: c.address.Endpoint,
+			Username: c.username,
+		}, c.credentialArgs)
 		if credErr != nil {
 			return "", fmt.Errorf("resolve credential: %w", credErr)
 		}

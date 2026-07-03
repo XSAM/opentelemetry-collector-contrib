@@ -400,16 +400,16 @@ func (p *postgreSQLScraper) collectTopQuery(ctx context.Context, clientFactory p
 	}
 }
 
-// start resolves the credential provider (if a credentials block is
+// start resolves the credential provider (if a db_auth block is
 // configured) from the host extension map — only available now, at Start — and
 // injects it into the client factory so connections are built with it.
 func (p *postgreSQLScraper) start(_ context.Context, host component.Host) error {
-	provider, err := p.config.resolveCredentialProvider(host.GetExtensions())
+	provider, args, err := p.config.resolveCredentialProvider(host.GetExtensions())
 	if err != nil {
 		return err
 	}
 	if provider != nil {
-		p.clientFactory.setCredentialProvider(provider)
+		p.clientFactory.setCredentialProvider(provider, args)
 	}
 	return nil
 }

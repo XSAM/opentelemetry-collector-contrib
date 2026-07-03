@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tj/assert"
@@ -1001,7 +1001,7 @@ func (mockSimpleClientFactory) close() error {
 }
 
 // setCredentialProvider implements postgreSQLClientFactory (no-op for the mock).
-func (mockSimpleClientFactory) setCredentialProvider(configcredentials.Provider) {}
+func (mockSimpleClientFactory) setCredentialProvider(dbauth.Provider, map[string]any) {}
 
 // getClient implements postgreSQLClientFactory.
 func (m mockSimpleClientFactory) getClient(string) (client, error) {
@@ -1103,7 +1103,7 @@ func (m *mockClientFactory) close() error {
 	return args.Error(0)
 }
 
-func (*mockClientFactory) setCredentialProvider(configcredentials.Provider) {}
+func (*mockClientFactory) setCredentialProvider(dbauth.Provider, map[string]any) {}
 
 func (m *mockClientFactory) initMocks(databases []string) {
 	listClient := new(mockClient)

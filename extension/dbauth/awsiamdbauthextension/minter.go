@@ -1,13 +1,13 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package awsiamcredentialsextension provides AWS RDS IAM database authentication
-// for the config/configcredentials framework. It is a config-less Collector
-// extension that also implements configcredentials.ProviderFactory: it mints
-// short-lived RDS IAM auth tokens (cached per target until shortly before expiry)
-// and supplies them as the connection secret. Receivers discover it via the host
-// extension map and build a Provider from their own inline credentials config.
-package awsiamcredentialsextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsiamcredentialsextension"
+// Package awsiamdbauthextension provides AWS RDS IAM database authentication for
+// the db_auth framework. It is a Collector extension that also implements
+// dbauth.Provider: it mints short-lived RDS IAM auth tokens (cached per target
+// until shortly before expiry) and supplies them as the connection secret.
+// Receivers reference it by component ID through their credentials config and
+// resolve it from the host extension map.
+package awsiamdbauthextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth/awsiamdbauthextension"
 
 import (
 	"context"

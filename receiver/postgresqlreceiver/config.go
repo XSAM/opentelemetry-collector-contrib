@@ -9,13 +9,15 @@ import (
 	"net"
 	"time"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confignet"
 	"go.opentelemetry.io/collector/config/configopaque"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/multierr"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/config/configdbauth"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
@@ -28,7 +30,7 @@ const (
 	ErrTransportsSupported = "invalid config: 'transport' must be 'tcp' or 'unix'"
 	ErrHostPort            = "invalid config: 'endpoint' must be in the form <host>:<port> no matter what 'transport' is configured"
 	// #nosec G101 - not hardcoded credentials
-	ErrPasswordAndCredentials = "invalid config: set either 'password' or 'credentials', not both"
+	ErrPasswordAndDBAuth = "invalid config: set either 'password' or 'db_auth', not both"
 )
 
 type TopQueryCollection struct {
@@ -52,11 +54,11 @@ type Config struct {
 	scraperhelper.ControllerConfig `mapstructure:",squash"`
 	Username                       string              `mapstructure:"username"`
 	Password                       configopaque.String `mapstructure:"password"`
-	// Credentials optionally sources the connection credential from a credentials
-	// provider extension (e.g. AWS IAM) instead of a static password. When set, the
-	// provider supplies the password at connection-open time. Mutually exclusive
-	// with the top-level password field.
-	Credentials                   configcredentials.Config       `mapstructure:"credentials,omitempty"`
+	// DBAuth optionally sources the connection credential from a db_auth provider
+	// extension (e.g. AWS IAM) instead of a static password. When set, the provider
+	// supplies the password at connection-open time. Mutually exclusive with the
+	// top-level password field.
+	DBAuth                        configdbauth.Config            `mapstructure:"db_auth,omitempty"`
 	Databases                     []string                       `mapstructure:"databases"`
 	ExcludeDatabases              []string                       `mapstructure:"exclude_databases"`
 	confignet.AddrConfig          `mapstructure:",squash"`       // provides Endpoint and Transport
@@ -81,22 +83,17 @@ func (cfg *Config) Validate() error {
 		err = multierr.Append(err, errors.New(ErrNoUsername))
 	}
 
-	// Credential source precedence (R12): a static password and a credentials
-	// block are mutually exclusive. A username alongside a credentials block is
-	// expected — the provider may use it as a mint input. When a credentials block
-	// is configured, the password is supplied by the provider, so the top-level
-	// password is not required.
-	credsConfigured := !cfg.Credentials.IsEmpty()
+	// Credential source precedence (R12): a static password and a db_auth block
+	// are mutually exclusive. A username alongside a db_auth block is expected —
+	// the provider may use it as a mint input. When a db_auth block is configured,
+	// the password is supplied by the provider, so the top-level password is not
+	// required.
+	dbAuthConfigured := !cfg.DBAuth.IsEmpty()
 	switch {
-	case credsConfigured && cfg.Password != "":
-		err = multierr.Append(err, errors.New(ErrPasswordAndCredentials))
-	case !credsConfigured && cfg.Password == "":
+	case dbAuthConfigured && cfg.Password != "":
+		err = multierr.Append(err, errors.New(ErrPasswordAndDBAuth))
+	case !dbAuthConfigured && cfg.Password == "":
 		err = multierr.Append(err, errors.New(ErrNoPassword))
-	}
-	if credsConfigured {
-		if credsErr := cfg.Credentials.Validate(); credsErr != nil {
-			err = multierr.Append(err, credsErr)
-		}
 	}
 
 	// The lib/pq module does not support overriding ServerName or specifying supported TLS versions
@@ -123,17 +120,19 @@ func (cfg *Config) Validate() error {
 	return err
 }
 
-// resolveCredentialProvider builds the credential provider from the credentials
-// block by finding the matching credentials-provider extension in the host
-// extension map, or returns (nil, nil) when no credentials block is configured
-// (the receiver then uses its static password). The receiver imports no provider
-// packages and supplies no factory list — the provider type is discovered from the
-// declared extensions. Provider-specific inputs (such as the AWS IAM provider's
-// endpoint and db_user) come from the operator's inline provider config, keeping
-// the receiver agnostic to any provider's config schema.
-func (cfg *Config) resolveCredentialProvider(extensions map[component.ID]component.Component) (configcredentials.Provider, error) {
-	if cfg.Credentials.IsEmpty() {
-		return nil, nil
+// resolveCredentialProvider resolves the db_auth credential provider named in the
+// db_auth block from the host extension map, or returns (nil, nil, nil) when no
+// db_auth block is configured (the receiver then uses its static password). The
+// receiver imports no provider packages — the provider is referenced by component
+// ID and resolved from the declared extensions. Provider-wide inputs (such as the
+// AWS IAM provider's region and role_arn) live on the extension's own config; the
+// per-connection inputs (endpoint and username) travel with each GetCredential
+// call, keeping the receiver agnostic to any provider's config. The returned args
+// map is the receiver's inline override of the provider's config, threaded
+// verbatim into each GetCredential call.
+func (cfg *Config) resolveCredentialProvider(extensions map[component.ID]component.Component) (dbauth.Provider, map[string]any, error) {
+	if cfg.DBAuth.IsEmpty() {
+		return nil, nil, nil
 	}
-	return cfg.Credentials.Resolve(configcredentials.ProviderSettings{}, extensions)
+	return cfg.DBAuth.GetProvider(extensions)
 }

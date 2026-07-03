@@ -1,4 +1,4 @@
-type: configcredentials
+type: configdbauth
 
 status:
   disable_codecov_badge: true

@@ -2,7 +2,8 @@ cmd/codecovgen
 pkg/pdatautil
 pkg/golden
 pkg/pdatatest
-pkg/config/configcredentials
+extension/dbauth
+config/configdbauth
 cmd/golden
 extension/internal/basicauth
 extension/internal/credentialsfile
@@ -145,7 +146,7 @@ exporter/sumologicexporter
 exporter/tencentcloudlogserviceexporter
 exporter/tinybirdexporter
 extension/asapauthextension
-extension/awsiamcredentialsextension
+extension/dbauth/awsiamdbauthextension
 internal/aws/proxy
 extension/awsproxy
 extension/azureauthextension

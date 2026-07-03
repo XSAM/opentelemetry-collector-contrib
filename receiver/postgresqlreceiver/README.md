@@ -176,7 +176,7 @@ When this feature gate is enabled, the following optional settings are available
 
 Those settings and their defaults are further documented in the [`sql/database`](https://pkg.go.dev/database/sql#DB) package.
 
-The connection pool composes with a `credentials` block (e.g. AWS IAM). The
+The connection pool composes with a `db_auth` block (e.g. AWS IAM). The
 credential is re-resolved on every new connection the pool opens, so a short-lived
 token (an RDS IAM token lives ~15 minutes) is re-minted as the pool grows or
 replaces connections, and a connection is never opened with an expired token.

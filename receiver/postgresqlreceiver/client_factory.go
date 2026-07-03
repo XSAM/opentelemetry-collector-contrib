@@ -10,17 +10,18 @@ import (
 	"sync"
 
 	"github.com/lib/pq"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/config/configcredentials"
 	"go.uber.org/multierr"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/postgresqlreceiver/internal/metadata"
 )
 
 type postgreSQLClientFactory interface {
 	getClient(database string) (client, error)
 	// setCredentialProvider injects the credential provider resolved from the host
-	// extension map at Start. Nil means no credentials block (static password).
-	setCredentialProvider(configcredentials.Provider)
+	// extension map at Start, along with the receiver's inline override (args) for
+	// that provider. A nil provider means no db_auth block (static password).
+	setCredentialProvider(provider dbauth.Provider, args map[string]any)
 	close() error
 }
 
@@ -51,8 +52,9 @@ func newDefaultClientFactory(cfg *Config) *defaultClientFactory {
 	}
 }
 
-func (d *defaultClientFactory) setCredentialProvider(p configcredentials.Provider) {
-	d.baseConfig.credentialProvider = p
+func (d *defaultClientFactory) setCredentialProvider(provider dbauth.Provider, args map[string]any) {
+	d.baseConfig.credentialProvider = provider
+	d.baseConfig.credentialArgs = args
 }
 
 func (d *defaultClientFactory) getClient(database string) (client, error) {
@@ -91,8 +93,9 @@ func newPoolClientFactory(cfg *Config) *poolClientFactory {
 	}
 }
 
-func (p *poolClientFactory) setCredentialProvider(provider configcredentials.Provider) {
+func (p *poolClientFactory) setCredentialProvider(provider dbauth.Provider, args map[string]any) {
 	p.baseConfig.credentialProvider = provider
+	p.baseConfig.credentialArgs = args
 }
 
 func (p *poolClientFactory) getClient(database string) (client, error) {
