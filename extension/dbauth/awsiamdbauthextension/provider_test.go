@@ -58,12 +58,6 @@ func TestFactory_DefaultConfig(t *testing.T) {
 	assert.True(t, ok, "default config is *Config")
 }
 
-func TestConfig_Validate(t *testing.T) {
-	require.ErrorIs(t, (&Config{}).Validate(), errNoRegion)
-	require.NoError(t, (&Config{Region: "us-east-1"}).Validate())
-	require.NoError(t, (&Config{Region: "us-east-1", RoleARN: "arn:role"}).Validate())
-}
-
 func TestExtension_ImplementsProvider(t *testing.T) {
 	p := newProviderExtension(t, &Config{Region: "us-east-1"})
 	require.NotNil(t, p)
@@ -131,17 +125,93 @@ func TestGetCredential_ExtensionArgsOverrideRegion(t *testing.T) {
 	assert.Equal(t, "us-east-2", m.lastTgt.Region, "with no override the configured default is used")
 }
 
-func TestGetCredential_ExtensionArgsClearingRequiredFieldErrors(t *testing.T) {
-	// An override that clears a required field (region) fails the merged config's
-	// validation rather than minting against an empty region.
-	m := &fakeMinter{token: "rds-token"}
-	e := newExtensionWithMinter(&Config{Region: "us-east-2"}, m)
+func TestGetCredential_RegionFromOverrideOnly(t *testing.T) {
+	// The extension is declared with no region — the "declare aws_iam once, let
+	// each receiver supply its region" pattern. A receiver's override provides the
+	// region, and minting succeeds against it. This is why region is not a
+	// config-load requirement on the extension.
+	exp := time.Unix(2000, 0)
+	m := &fakeMinter{token: "rds-token", notAfter: exp}
+	e := newExtensionWithMinter(&Config{}, m)
 
+	cred, err := e.GetCredential(context.Background(),
+		dbauth.Request{Endpoint: "db:5432", Username: "monitor"},
+		map[string]any{"region": "us-east-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "rds-token", cred.Secret)
+	assert.Equal(t,
+		target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor"},
+		m.lastTgt, "the region comes entirely from the receiver's override")
+}
+
+func TestGetCredential_NoRegionFromEitherSourceErrors(t *testing.T) {
+	// Region is required to mint, but only at mint time and from either source.
+	// When neither the extension nor the override supplies it, the call errors
+	// before reaching the minter rather than minting against an empty region.
+	m := &fakeMinter{token: "rds-token"}
+	e := newExtensionWithMinter(&Config{}, m)
+
+	// Neither source: no default on the extension, no override.
 	_, err := e.GetCredential(context.Background(),
+		dbauth.Request{Endpoint: "db:5432", Username: "monitor"}, nil)
+	require.ErrorIs(t, err, errNoRegion)
+
+	// An override that explicitly clears the region is likewise rejected.
+	e = newExtensionWithMinter(&Config{Region: "us-east-2"}, m)
+	_, err = e.GetCredential(context.Background(),
 		dbauth.Request{Endpoint: "db:5432", Username: "monitor"},
 		map[string]any{"region": ""})
 	require.ErrorIs(t, err, errNoRegion)
-	assert.Equal(t, int64(0), m.calls, "an invalid override never reaches the minter")
+
+	assert.Equal(t, int64(0), m.calls, "a missing region never reaches the minter")
+}
+
+func TestGetCredential_EndpointAndDBUserFromConfig(t *testing.T) {
+	// When the receiver makes a request with no endpoint/username, the extension's
+	// own configured endpoint and db_user are used — the lowest-precedence source.
+	m := &fakeMinter{token: "rds-token", notAfter: time.Unix(2000, 0)}
+	e := newExtensionWithMinter(&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"}, m)
+
+	_, err := e.GetCredential(context.Background(), dbauth.Request{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t,
+		target{Endpoint: "cfg-db:5432", Region: "us-east-1", DBUser: "cfg_user"},
+		m.lastTgt, "with an empty request the extension's configured endpoint/db_user are used")
+}
+
+func TestGetCredential_RequestOutranksConfigEndpointAndDBUser(t *testing.T) {
+	// The receiver's per-connection request outranks the extension's own configured
+	// endpoint/db_user: a receiver that supplies its own values gets those, not the
+	// extension's provider-wide defaults.
+	m := &fakeMinter{token: "rds-token", notAfter: time.Unix(2000, 0)}
+	e := newExtensionWithMinter(&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"}, m)
+
+	_, err := e.GetCredential(context.Background(),
+		dbauth.Request{Endpoint: "req-db:5432", Username: "req_user"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t,
+		target{Endpoint: "req-db:5432", Region: "us-east-1", DBUser: "req_user"},
+		m.lastTgt, "the request's endpoint/username outrank the extension's configured ones")
+}
+
+func TestGetCredential_OverrideOutranksRequestEndpointAndDBUser(t *testing.T) {
+	// The db_auth override is the highest-precedence source: endpoint/db_user set
+	// inline under the provider ID win over both the request and the extension
+	// config. This is the case the user's config exercises.
+	m := &fakeMinter{token: "rds-token", notAfter: time.Unix(2000, 0)}
+	e := newExtensionWithMinter(&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"}, m)
+
+	_, err := e.GetCredential(context.Background(),
+		dbauth.Request{Endpoint: "req-db:5432", Username: "req_user"},
+		map[string]any{"endpoint": "override-db:5432", "db_user": "override_user"})
+	require.NoError(t, err)
+	assert.Equal(t,
+		target{Endpoint: "override-db:5432", Region: "us-east-1", DBUser: "override_user"},
+		m.lastTgt, "the db_auth override outranks both the request and the extension config")
+
+	// The override is per call: the shared extension config is not mutated.
+	assert.Equal(t, "cfg-db:5432", e.cfg.Endpoint, "the shared extension config is not mutated by an override")
+	assert.Equal(t, "cfg_user", e.cfg.DBUser)
 }
 
 func TestGetCredential_ExtensionArgsUnknownKeyErrors(t *testing.T) {

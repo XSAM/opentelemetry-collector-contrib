@@ -28,11 +28,12 @@ package. A receiver may override a default (e.g. `region`) inline under the
 provider ID in its `db_auth` block; the override is merged over these defaults
 per credential request, without mutating the shared extension config.
 
-The **per-connection** inputs — the database endpoint and user — are not
-configured here; the receiver passes its own endpoint and username with each
-credential request. The token is minted on demand via the AWS default credential
-chain (ECS task role, EC2 instance profile, IRSA), cached per target, and
-refreshed shortly before expiry.
+The **per-connection** inputs — the database endpoint and user — are normally
+not set here: the receiver passes its own endpoint and username with each
+credential request. They may still be pinned on the extension (or in the `db_auth`
+override) when needed; see the field table below for the precedence. The token is
+minted on demand via the AWS default credential chain (ECS task role, EC2 instance
+profile, IRSA), cached per target, and refreshed shortly before expiry.
 
 ## Configuration
 
@@ -55,11 +56,15 @@ receivers:
     db_auth:
       aws_iam: {}                # no override: use the extension's defaults
 
+exporters:
+  debug: {}
+
 service:
   extensions: [aws_iam]
   pipelines:
     metrics:
       receivers: [postgresql/this, postgresql/another]
+      exporters: [debug]
 ```
 
 Adding a database that uses the extension's defaults is one more receiver with
@@ -67,13 +72,34 @@ Adding a database that uses the extension's defaults is one more receiver with
 A database in a different region overrides just `region` inline under `aws_iam`
 (as `postgresql/this` does above); no separate named instance is required.
 
-| Field      | Required | Description |
-| ---------- | -------- | ----------- |
-| `region`   | yes      | AWS region of the database. |
-| `role_arn` | no       | IAM role assumed before minting the token (cross-account access). |
+Because the region can be supplied per-receiver, the extension may also be
+declared with no region at all, letting each receiver provide its own:
 
-The endpoint and database user are supplied by the consuming receiver (from its
-own `endpoint` and `username`), not configured here. The minted token is mutually
+```yaml
+extensions:
+  aws_iam: {}                    # no provider-wide default
+
+receivers:
+  postgresql/this:
+    endpoint: this-db.123456789012.us-east-1.rds.amazonaws.com:5432
+    username: monitor
+    db_auth:
+      aws_iam:
+        region: us-east-1        # every receiver supplies its own region
+```
+
+| Field      | Required                    | Description |
+| ---------- | --------------------------- | ----------- |
+| `region`   | yes, on the extension or in each receiver's override | AWS region of the database. It need not be set on the extension as long as every receiver that references it supplies one; a token cannot be minted without a region resolved from one source or the other. |
+| `endpoint` | no                          | Database endpoint (`host:port`) the token is minted for. Normally supplied by the receiver from its own `endpoint`; set it here (or in the override) only to pin or override that value. |
+| `db_user`  | no                          | Database user the token authenticates. Normally supplied by the receiver from its own `username`; set it here (or in the override) only to pin or override that value. |
+| `role_arn` | no                          | IAM role assumed before minting the token (cross-account access). |
+
+The endpoint and database user are normally supplied by the consuming receiver
+(from its own `endpoint` and `username`), so they need not be configured here. Each
+mint input is resolved from up to three sources, highest precedence first: the
+receiver's inline `db_auth` override, then the receiver's own request
+(`endpoint`/`username`), then the extension's config. The minted token is mutually
 exclusive with a static `password` on the receiver.
 
 [development]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#development
