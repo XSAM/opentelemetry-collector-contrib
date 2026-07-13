@@ -21,85 +21,64 @@ auth token used in place of a static password.
 ## How it works
 
 The extension implements `dbauth.Provider`. It is declared once, listed in
-`service.extensions`, and carries the **provider-wide** defaults (the AWS region
-and an optional role to assume). Receivers reference it by component ID and
-resolve it from the host extension map at their `Start()`, without importing this
-package. A receiver may override a default (e.g. `region`) inline under the
-provider ID in its `db_auth` block; the override is merged over these defaults
-per credential request, without mutating the shared extension config.
+`service.extensions`, and carries the **provider-wide** config (the required AWS
+`region`). Receivers reference it by component ID and resolve it from the host
+extension map at their `Start()`, without importing this package. To vary the
+region across receivers, declare multiple named instances (`aws_iam`,
+`aws_iam/west`) and point each receiver at the one it needs; there is no inline
+override in the `db_auth` block.
 
 The **per-connection** inputs — the database endpoint and user — are normally
 not set here: the receiver passes its own endpoint and username with each
-credential request. They may still be pinned on the extension (or in the `db_auth`
-override) when needed; see the field table below for the precedence. The token is
-minted on demand via the AWS default credential chain (ECS task role, EC2 instance
-profile, IRSA), cached per target, and refreshed shortly before expiry.
+credential request. They may still be pinned on the extension when needed; see the
+field table below for the precedence. The token is minted on demand via the AWS
+default credential chain (ECS task role, EC2 instance profile, IRSA), cached per
+target, and refreshed shortly before expiry.
 
 ## Configuration
 
 ```yaml
 extensions:
-  aws_iam:                       # declared once, provider-wide defaults
-    region: us-east-2
-    # role_arn: arn:aws:iam::123456789012:role/db-access   # optional, cross-account
+  aws_iam:                       # declared once, provider-wide config
+    region: us-east-1
+  aws_iam/west:                  # a second instance for a different region
+    region: us-west-2
 
 receivers:
   postgresql/this:
     endpoint: this-db.123456789012.us-east-1.rds.amazonaws.com:5432
     username: monitor
-    db_auth:
-      aws_iam:                   # reference the extension by ID
-        region: us-east-1        # override the region for this receiver only
+    db_auth: aws_iam             # reference the extension by ID
   postgresql/another:
-    endpoint: another-db.123456789012.us-east-2.rds.amazonaws.com:5432
+    endpoint: another-db.123456789012.us-west-2.rds.amazonaws.com:5432
     username: reader
-    db_auth:
-      aws_iam: {}                # no override: use the extension's defaults
+    db_auth: aws_iam/west        # reference a differently-configured instance
 
 exporters:
   debug: {}
 
 service:
-  extensions: [aws_iam]
+  extensions: [aws_iam, aws_iam/west]
   pipelines:
     metrics:
       receivers: [postgresql/this, postgresql/another]
       exporters: [debug]
 ```
 
-Adding a database that uses the extension's defaults is one more receiver with
-`db_auth: { aws_iam: {} }` — the single `aws_iam:` declaration covers all of them.
-A database in a different region overrides just `region` inline under `aws_iam`
-(as `postgresql/this` does above); no separate named instance is required.
+Adding a database in the same region is one more receiver with `db_auth: aws_iam`
+— the single `aws_iam:` declaration covers all of them. A database in a different
+region references a separate declared instance (`aws_iam/west` above).
 
-Because the region can be supplied per-receiver, the extension may also be
-declared with no region at all, letting each receiver provide its own:
-
-```yaml
-extensions:
-  aws_iam: {}                    # no provider-wide default
-
-receivers:
-  postgresql/this:
-    endpoint: this-db.123456789012.us-east-1.rds.amazonaws.com:5432
-    username: monitor
-    db_auth:
-      aws_iam:
-        region: us-east-1        # every receiver supplies its own region
-```
-
-| Field      | Required                    | Description |
-| ---------- | --------------------------- | ----------- |
-| `region`   | yes, on the extension or in each receiver's override | AWS region of the database. It need not be set on the extension as long as every receiver that references it supplies one; a token cannot be minted without a region resolved from one source or the other. |
-| `endpoint` | no                          | Database endpoint (`host:port`) the token is minted for. Normally supplied by the receiver from its own `endpoint`; set it here (or in the override) only to pin or override that value. |
-| `db_user`  | no                          | Database user the token authenticates. Normally supplied by the receiver from its own `username`; set it here (or in the override) only to pin or override that value. |
-| `role_arn` | no                          | IAM role assumed before minting the token (cross-account access). |
+| Field      | Required | Description |
+| ---------- | -------- | ----------- |
+| `region`   | yes      | AWS region of the database. Required on the extension; a token cannot be minted without it, so it is validated at config load. |
+| `endpoint` | no       | Database endpoint (`host:port`) the token is minted for. Normally supplied by the receiver from its own `endpoint`; set it here only as a fallback for requests that carry no endpoint. |
+| `db_user`  | no       | Database user the token authenticates. Normally supplied by the receiver from its own `username`; set it here only as a fallback for requests that carry no username. |
 
 The endpoint and database user are normally supplied by the consuming receiver
 (from its own `endpoint` and `username`), so they need not be configured here. Each
-mint input is resolved from up to three sources, highest precedence first: the
-receiver's inline `db_auth` override, then the receiver's own request
-(`endpoint`/`username`), then the extension's config. The minted token is mutually
+is resolved from the receiver's own request (`endpoint`/`username`) when present,
+falling back to the extension's config otherwise. The minted token is mutually
 exclusive with a static `password` on the receiver.
 
 [development]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#development

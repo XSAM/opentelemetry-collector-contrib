@@ -5,7 +5,7 @@
 // the db_auth framework. It is a Collector extension that also implements
 // dbauth.Provider: it mints short-lived RDS IAM auth tokens (cached per target
 // until shortly before expiry) and supplies them as the connection secret.
-// Receivers reference it by component ID through their credentials config and
+// Receivers reference it by component ID through their db_auth block and
 // resolve it from the host extension map.
 package awsiamdbauthextension // import "github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth/awsiamdbauthextension"
 
@@ -15,11 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 // rdsTokenLifetime is the lifetime AWS gives an RDS IAM auth token.
@@ -32,7 +29,7 @@ const rdsTokenLifetime = 15 * time.Minute
 const refreshMargin = 5 * time.Minute
 
 // target identifies what a token is minted for. Tokens are cached per target, so
-// two connections that differ only by RoleARN do not share a token.
+// two connections that differ by any field do not share a token.
 type target struct {
 	// Endpoint is the RDS endpoint in host:port form.
 	Endpoint string
@@ -40,8 +37,6 @@ type target struct {
 	Region string
 	// DBUser is the database user the token authenticates.
 	DBUser string
-	// RoleARN, when set, is assumed before minting (cross-account access).
-	RoleARN string
 }
 
 // tokenBuilder mints a token for a target. Injectable so tests run without AWS.
@@ -92,19 +87,13 @@ func (m *minter) Token(ctx context.Context, t target) (token string, notAfter ti
 }
 
 // buildRDSToken is the production tokenBuilder: it resolves AWS credentials from
-// the default chain (optionally assuming RoleARN) and calls the RDS auth helper.
+// the default chain (ECS task role, EC2 instance profile, IRSA) and calls the RDS
+// auth helper.
 func buildRDSToken(ctx context.Context, t target) (string, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(t.Region))
 	if err != nil {
 		return "", fmt.Errorf("load AWS config: %w", err)
 	}
 
-	creds := cfg.Credentials
-	if t.RoleARN != "" {
-		creds = aws.NewCredentialsCache(
-			stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), t.RoleARN),
-		)
-	}
-
-	return auth.BuildAuthToken(ctx, t.Endpoint, t.Region, t.DBUser, creds)
+	return auth.BuildAuthToken(ctx, t.Endpoint, t.Region, t.DBUser, cfg.Credentials)
 }

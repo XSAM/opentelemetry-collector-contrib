@@ -121,18 +121,16 @@ func (cfg *Config) Validate() error {
 }
 
 // resolveCredentialProvider resolves the db_auth credential provider named in the
-// db_auth block from the host extension map, or returns (nil, nil, nil) when no
-// db_auth block is configured (the receiver then uses its static password). The
-// receiver imports no provider packages — the provider is referenced by component
-// ID and resolved from the declared extensions. Provider-wide inputs (such as the
-// AWS IAM provider's region and role_arn) live on the extension's own config; the
-// per-connection inputs (endpoint and username) travel with each GetCredential
-// call, keeping the receiver agnostic to any provider's config. The returned args
-// map is the receiver's inline override of the provider's config, threaded
-// verbatim into each GetCredential call.
-func (cfg *Config) resolveCredentialProvider(extensions map[component.ID]component.Component) (dbauth.Provider, map[string]any, error) {
+// db_auth block from the host extension map, or returns (nil, nil) when no db_auth
+// block is configured (the receiver then uses its static password). The receiver
+// imports no provider packages — the provider is referenced by component ID and
+// resolved from the declared extensions. Provider-wide inputs (such as the AWS IAM
+// provider's region) live on the extension's own config; the per-connection inputs
+// (endpoint and username) travel with each GetCredential call, keeping the receiver
+// agnostic to any provider's config.
+func (cfg *Config) resolveCredentialProvider(extensions map[component.ID]component.Component) (dbauth.Provider, error) {
 	if cfg.DBAuth.IsEmpty() {
-		return nil, nil, nil
+		return nil, nil
 	}
 	return cfg.DBAuth.GetProvider(extensions)
 }

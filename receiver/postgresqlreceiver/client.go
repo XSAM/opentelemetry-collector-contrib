@@ -195,10 +195,6 @@ type postgreSQLConfig struct {
 	// physical connection by credentialConnector, so a long-lived pool re-mints on
 	// every new connection it opens. Either way, no collector restart is needed.
 	credentialProvider dbauth.Provider
-	// credentialArgs is the receiver's inline db_auth override for the provider,
-	// passed verbatim to every GetCredential call so the provider merges it over
-	// its own defaults for this receiver. Nil when no override was configured.
-	credentialArgs map[string]any
 }
 
 func sslConnectionString(tls configtls.ClientConfig) string {
@@ -262,9 +258,15 @@ func (c postgreSQLConfig) connectionString(ctx context.Context) (string, error) 
 		cred, credErr := c.credentialProvider.GetCredential(ctx, dbauth.Request{
 			Endpoint: c.address.Endpoint,
 			Username: c.username,
-		}, c.credentialArgs)
+		})
 		if credErr != nil {
 			return "", fmt.Errorf("resolve credential: %w", credErr)
+		}
+		if cred == nil {
+			// A provider must return either a credential or an error. Guard against a
+			// contract-violating provider so a bad extension fails this scrape closed
+			// rather than panicking the whole collector on the nil dereference below.
+			return "", errors.New("resolve credential: provider returned a nil credential")
 		}
 		password = cred.Secret
 		if cred.Username != nil {

@@ -1001,7 +1001,7 @@ func (mockSimpleClientFactory) close() error {
 }
 
 // setCredentialProvider implements postgreSQLClientFactory (no-op for the mock).
-func (mockSimpleClientFactory) setCredentialProvider(dbauth.Provider, map[string]any) {}
+func (mockSimpleClientFactory) setCredentialProvider(dbauth.Provider) {}
 
 // getClient implements postgreSQLClientFactory.
 func (m mockSimpleClientFactory) getClient(string) (client, error) {
@@ -1103,7 +1103,7 @@ func (m *mockClientFactory) close() error {
 	return args.Error(0)
 }
 
-func (*mockClientFactory) setCredentialProvider(dbauth.Provider, map[string]any) {}
+func (*mockClientFactory) setCredentialProvider(dbauth.Provider) {}
 
 func (m *mockClientFactory) initMocks(databases []string) {
 	listClient := new(mockClient)

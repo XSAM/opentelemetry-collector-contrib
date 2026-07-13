@@ -5,11 +5,9 @@ package awsiamdbauthextension // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
-	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/extension"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
@@ -42,30 +40,24 @@ func (*iamExtension) Shutdown(context.Context) error              { return nil }
 // endpoint and user and returns it as the Secret. Username is nil — the consumer
 // uses its own configured username.
 //
-// Each mint input is resolved from up to three sources, highest precedence first:
-//
-//  1. the receiver's inline db_auth override (extensionArgs),
-//  2. the per-connection dbauth.Request the receiver made, and
-//  3. the extension's own config.
-//
-// So a value set in the db_auth block wins; otherwise the receiver's own endpoint
-// and username are used; otherwise the extension's configured defaults apply. The
-// region has no request source, so for it this collapses to override-then-config;
-// it must resolve to a non-empty value from one of those before a token can be
-// minted, so an empty merged region is an error here.
-func (e *iamExtension) GetCredential(ctx context.Context, req dbauth.Request, extensionArgs map[string]any) (*dbauth.Credential, error) {
-	cfg, err := e.mergedConfig(req, extensionArgs)
-	if err != nil {
-		return nil, err
+// The endpoint and database user are taken from the per-connection dbauth.Request
+// when it supplies them; otherwise they fall back to the extension's own config.
+// The region has no request source and comes only from the extension config,
+// where it is required (validated at load).
+func (e *iamExtension) GetCredential(ctx context.Context, req dbauth.Request) (*dbauth.Credential, error) {
+	endpoint := e.cfg.Endpoint
+	if req.Endpoint != "" {
+		endpoint = req.Endpoint
 	}
-	if cfg.Region == "" {
-		return nil, errNoRegion
+	dbUser := e.cfg.DBUser
+	if req.Username != "" {
+		dbUser = req.Username
 	}
+
 	token, notAfter, err := e.minter.Token(ctx, target{
-		Endpoint: cfg.Endpoint,
-		Region:   cfg.Region,
-		DBUser:   cfg.DBUser,
-		RoleARN:  cfg.RoleARN,
+		Endpoint: endpoint,
+		Region:   e.cfg.Region,
+		DBUser:   dbUser,
 	})
 	if err != nil {
 		return nil, err
@@ -74,37 +66,4 @@ func (e *iamExtension) GetCredential(ctx context.Context, req dbauth.Request, ex
 		Secret:   token,
 		NotAfter: &notAfter,
 	}, nil
-}
-
-// mergedConfig returns the effective config for a single GetCredential call. It
-// layers the three input sources so that precedence falls out of the merge order:
-// it starts from a copy of the extension's own config, seeds the request's
-// per-connection endpoint/user onto it (so the request outranks the extension's
-// own endpoint/db_user), then overlays extensionArgs last (so a db_auth override
-// outranks both). The extension's own config is never mutated, so concurrent calls
-// with different requests or overrides do not interfere.
-//
-// confmap unmarshals strictly, so an override key that is not one of this
-// provider's config fields (typically a typo such as "regionn") fails here rather
-// than being silently dropped — the same strictness the Collector applies to
-// every component config. That is deliberate: silently ignoring a misspelled
-// region override would keep minting against the default region while the operator
-// believes they switched, so the mistake is surfaced instead.
-func (e *iamExtension) mergedConfig(req dbauth.Request, extensionArgs map[string]any) (*Config, error) {
-	merged := *e.cfg
-	// The request's per-connection inputs sit beneath a db_auth override but above
-	// the extension's own endpoint/db_user, so seed them before overlaying the
-	// override. An empty request field leaves the extension's default in place.
-	if req.Endpoint != "" {
-		merged.Endpoint = req.Endpoint
-	}
-	if req.Username != "" {
-		merged.DBUser = req.Username
-	}
-	if len(extensionArgs) > 0 {
-		if err := confmap.NewFromStringMap(extensionArgs).Unmarshal(&merged); err != nil {
-			return nil, fmt.Errorf("aws_iam: invalid db_auth override: %w", err)
-		}
-	}
-	return &merged, nil
 }

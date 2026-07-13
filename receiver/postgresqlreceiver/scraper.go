@@ -404,12 +404,12 @@ func (p *postgreSQLScraper) collectTopQuery(ctx context.Context, clientFactory p
 // configured) from the host extension map — only available now, at Start — and
 // injects it into the client factory so connections are built with it.
 func (p *postgreSQLScraper) start(_ context.Context, host component.Host) error {
-	provider, args, err := p.config.resolveCredentialProvider(host.GetExtensions())
+	provider, err := p.config.resolveCredentialProvider(host.GetExtensions())
 	if err != nil {
 		return err
 	}
 	if provider != nil {
-		p.clientFactory.setCredentialProvider(provider, args)
+		p.clientFactory.setCredentialProvider(provider)
 	}
 	return nil
 }

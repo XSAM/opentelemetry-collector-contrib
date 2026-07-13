@@ -19,9 +19,9 @@ import (
 type postgreSQLClientFactory interface {
 	getClient(database string) (client, error)
 	// setCredentialProvider injects the credential provider resolved from the host
-	// extension map at Start, along with the receiver's inline override (args) for
-	// that provider. A nil provider means no db_auth block (static password).
-	setCredentialProvider(provider dbauth.Provider, args map[string]any)
+	// extension map at Start. A nil provider means no db_auth block (static
+	// password).
+	setCredentialProvider(provider dbauth.Provider)
 	close() error
 }
 
@@ -52,9 +52,8 @@ func newDefaultClientFactory(cfg *Config) *defaultClientFactory {
 	}
 }
 
-func (d *defaultClientFactory) setCredentialProvider(provider dbauth.Provider, args map[string]any) {
+func (d *defaultClientFactory) setCredentialProvider(provider dbauth.Provider) {
 	d.baseConfig.credentialProvider = provider
-	d.baseConfig.credentialArgs = args
 }
 
 func (d *defaultClientFactory) getClient(database string) (client, error) {
@@ -93,9 +92,8 @@ func newPoolClientFactory(cfg *Config) *poolClientFactory {
 	}
 }
 
-func (p *poolClientFactory) setCredentialProvider(provider dbauth.Provider, args map[string]any) {
+func (p *poolClientFactory) setCredentialProvider(provider dbauth.Provider) {
 	p.baseConfig.credentialProvider = provider
-	p.baseConfig.credentialArgs = args
 }
 
 func (p *poolClientFactory) getClient(database string) (client, error) {

@@ -74,24 +74,24 @@ func TestMinter_RefreshesNearExpiry(t *testing.T) {
 	assert.Equal(t, 2, calls)
 }
 
-func TestMinter_RoleARNInCacheKey(t *testing.T) {
+func TestMinter_DBUserInCacheKey(t *testing.T) {
 	now := time.Unix(1000, 0)
 	var calls int
 	m := newTestMinter(
-		func(_ context.Context, tgt target) (string, error) { calls++; return "tok-" + tgt.RoleARN, nil },
+		func(_ context.Context, tgt target) (string, error) { calls++; return "tok-" + tgt.DBUser, nil },
 		func() time.Time { return now },
 	)
 
 	base := target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor"}
-	withRole := base
-	withRole.RoleARN = "arn:aws:iam::123456789012:role/cross"
+	other := base
+	other.DBUser = "reader"
 
 	a, _, err := m.Token(context.Background(), base)
 	require.NoError(t, err)
-	b, _, err := m.Token(context.Background(), withRole)
+	b, _, err := m.Token(context.Background(), other)
 	require.NoError(t, err)
 
-	assert.NotEqual(t, a, b, "targets differing only by RoleARN must not share a cached token")
+	assert.NotEqual(t, a, b, "targets differing only by DBUser must not share a cached token")
 	assert.Equal(t, 2, calls)
 }
 

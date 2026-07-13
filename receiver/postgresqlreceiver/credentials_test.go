@@ -26,7 +26,7 @@ type staticProvider struct {
 	secret   string
 }
 
-func (p *staticProvider) GetCredential(context.Context, dbauth.Request, map[string]any) (*dbauth.Credential, error) {
+func (p *staticProvider) GetCredential(context.Context, dbauth.Request) (*dbauth.Credential, error) {
 	return &dbauth.Credential{Username: p.username, Secret: p.secret}, nil
 }
 
@@ -89,7 +89,7 @@ func TestConfigValidate_PasswordAndDBAuthMutuallyExclusive(t *testing.T) {
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
 	cfg.Password = "static"
-	cfg.DBAuth = configdbauth.Config{ProviderConfigs: map[string]any{"aws_iam": nil}}
+	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
 
 	err := cfg.Validate()
 	require.Error(t, err)
@@ -100,7 +100,7 @@ func TestConfigValidate_DBAuthWithoutPasswordIsValid(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.DBAuth = configdbauth.Config{ProviderConfigs: map[string]any{"aws_iam": nil}}
+	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
 
 	require.NoError(t, cfg.Validate(), "a db_auth block satisfies the credential requirement without a password")
 }
@@ -115,7 +115,7 @@ type fakeCredExtension struct {
 func (fakeCredExtension) Start(context.Context, component.Host) error { return nil }
 func (fakeCredExtension) Shutdown(context.Context) error              { return nil }
 
-func (f fakeCredExtension) GetCredential(context.Context, dbauth.Request, map[string]any) (*dbauth.Credential, error) {
+func (f fakeCredExtension) GetCredential(context.Context, dbauth.Request) (*dbauth.Credential, error) {
 	return &dbauth.Credential{Secret: f.secret}, nil
 }
 
@@ -131,9 +131,9 @@ func TestResolveCredentialProvider_ResolvesFromHostExtension(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
-	cfg.DBAuth = configdbauth.Config{ProviderConfigs: map[string]any{"aws_iam": nil}}
+	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
 
-	p, _, err := cfg.resolveCredentialProvider(credExtMap())
+	p, err := cfg.resolveCredentialProvider(credExtMap())
 	require.NoError(t, err)
 	require.NotNil(t, p, "a matching declared provider extension resolves")
 }
@@ -143,9 +143,9 @@ func TestResolveCredentialProvider_NoMatchingExtension(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
-	cfg.DBAuth = configdbauth.Config{ProviderConfigs: map[string]any{"aws_iam": nil}}
+	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
 
-	_, _, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{})
+	_, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{})
 	require.Error(t, err, "no declared extension matches the provider ID")
 }
 
@@ -155,7 +155,7 @@ func TestResolveCredentialProvider_NoAuthReturnsNil(t *testing.T) {
 	cfg.Username = "u"
 	cfg.Password = "pw"
 
-	p, _, err := cfg.resolveCredentialProvider(credExtMap())
+	p, err := cfg.resolveCredentialProvider(credExtMap())
 	require.NoError(t, err)
 	assert.Nil(t, p, "no db_auth block means no provider; the static password is used")
 }
@@ -168,7 +168,7 @@ func TestNewPoolClientFactory_AcceptsDBAuth(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.DBAuth = configdbauth.Config{ProviderConfigs: map[string]any{"aws_iam": nil}}
+	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
 
 	f := newPoolClientFactory(cfg)
 	t.Cleanup(func() { require.NoError(t, f.close()) }) // close pooled *sql.DBs so goleak stays clean
@@ -176,7 +176,7 @@ func TestNewPoolClientFactory_AcceptsDBAuth(t *testing.T) {
 	// With a provider injected, getClient builds a *sql.DB backed by the
 	// credential-resolving connector (sql.OpenDB is lazy, so no real dial here) and
 	// caches one per database.
-	f.setCredentialProvider(&staticProvider{secret: "minted-token"}, nil)
+	f.setCredentialProvider(&staticProvider{secret: "minted-token"})
 	c1, err := f.getClient("db1")
 	require.NoError(t, err)
 	require.NotNil(t, c1)
@@ -192,7 +192,7 @@ type countingProvider struct {
 	calls int
 }
 
-func (p *countingProvider) GetCredential(context.Context, dbauth.Request, map[string]any) (*dbauth.Credential, error) {
+func (p *countingProvider) GetCredential(context.Context, dbauth.Request) (*dbauth.Credential, error) {
 	p.calls++
 	return nil, errors.New("mint failed")
 }
@@ -229,31 +229,65 @@ func TestCredentialConnector_PerConnectionRefresh(t *testing.T) {
 	assert.Contains(t, cs2, "password=token-v2", "the next connection picks up the rotated secret")
 }
 
-func TestConfigUnmarshal_DBAuthInlineOverride(t *testing.T) {
-	// The receiver config's db_auth block is a type-keyed block: the single key is
-	// the provider extension's component ID and its inline value is the override
-	// passed to the provider. Confirm mapstructure's ",remain" capture round-trips
-	// the real YAML shape into ProviderConfigs and that resolveCredentialProvider
-	// returns that inline value as the args threaded to GetCredential.
+// nilCredentialProvider violates the dbauth.Provider contract by returning
+// neither a credential nor an error, so a test can assert connectionString fails
+// closed instead of dereferencing the nil credential.
+type nilCredentialProvider struct{}
+
+func (nilCredentialProvider) GetCredential(context.Context, dbauth.Request) (*dbauth.Credential, error) {
+	return nil, nil
+}
+
+func TestConnectionString_NilCredentialFailsClosed(t *testing.T) {
+	// A contract-violating provider that returns (nil, nil) must not panic the
+	// collector on the credential dereference; connectionString returns an error so
+	// only this scrape fails.
+	cfg := baseConfigWithProvider(nilCredentialProvider{})
+	_, err := cfg.connectionString(context.Background())
+	require.Error(t, err, "a nil credential from the provider is surfaced as an error, not a panic")
+	assert.Contains(t, err.Error(), "nil credential")
+}
+
+func TestConfigUnmarshal_DBAuthScalarID(t *testing.T) {
+	// The receiver config's db_auth block is a bare component-ID reference: the
+	// scalar value names the provider extension. Confirm confmap decodes that scalar
+	// into configdbauth.Config via its UnmarshalText hook (the same path a bare
+	// component.ID field uses) and that resolveCredentialProvider resolves it.
 	cfg := createDefaultConfig().(*Config)
 	conf := confmap.NewFromStringMap(map[string]any{
 		"endpoint": "db.example.com:5432",
 		"username": "monitor",
-		"db_auth": map[string]any{
-			"aws_iam": map[string]any{"region": "us-east-1"},
-		},
+		"db_auth":  "aws_iam",
 	})
 	require.NoError(t, conf.Unmarshal(cfg))
 	require.NoError(t, cfg.Validate())
 
-	require.Equal(t,
-		map[string]any{"aws_iam": map[string]any{"region": "us-east-1"}},
-		cfg.DBAuth.ProviderConfigs,
-		"the whole db_auth block is captured by the ,remain tag")
+	require.Equal(t, component.MustNewID("aws_iam"), cfg.DBAuth.ProviderID,
+		"the scalar db_auth value decodes into the provider component ID")
 
-	provider, args, err := cfg.resolveCredentialProvider(credExtMap())
+	provider, err := cfg.resolveCredentialProvider(credExtMap())
+	require.NoError(t, err)
+	require.NotNil(t, provider, "the referenced extension resolves from the host map")
+}
+
+func TestConfigUnmarshal_DBAuthNamedInstance(t *testing.T) {
+	// A named instance (aws_iam/primary) decodes the same way and resolves against a
+	// host map keyed by the full named ID.
+	cfg := createDefaultConfig().(*Config)
+	conf := confmap.NewFromStringMap(map[string]any{
+		"endpoint": "db.example.com:5432",
+		"username": "monitor",
+		"db_auth":  "aws_iam/primary",
+	})
+	require.NoError(t, conf.Unmarshal(cfg))
+	require.NoError(t, cfg.Validate())
+
+	id := component.MustNewIDWithName("aws_iam", "primary")
+	require.Equal(t, id, cfg.DBAuth.ProviderID)
+
+	provider, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{
+		id: fakeCredExtension{secret: "fake-token"},
+	})
 	require.NoError(t, err)
 	require.NotNil(t, provider)
-	assert.Equal(t, map[string]any{"region": "us-east-1"}, args,
-		"the inline value under the provider ID is threaded to GetCredential as the override")
 }

@@ -16,11 +16,10 @@ import (
 // NewFactory returns the aws_iam credential provider as a Collector extension
 // factory. The extension is declared once (and listed in service.extensions) and
 // is referenced by any number of receivers, each naming it by component ID inside
-// their db_auth block. It holds the provider-wide defaults (region, optional
-// role_arn); a receiver may override those defaults inline under the provider ID,
-// and the per-connection mint inputs (endpoint, db user) arrive with each
+// their db_auth block. It holds the provider-wide config (the required region);
+// the per-connection mint inputs (endpoint, db user) arrive with each
 // GetCredential call, so one declared extension serves many receivers
-// concurrently.
+// concurrently. To vary the region, declare multiple named instances.
 func NewFactory() extension.Factory {
 	return extension.NewFactory(
 		metadata.Type,
