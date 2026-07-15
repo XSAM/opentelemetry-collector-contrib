@@ -58,7 +58,7 @@ type Config struct {
 	// extension (e.g. AWS IAM) instead of a static password. When set, the provider
 	// supplies the password at connection-open time. Mutually exclusive with the
 	// top-level password field.
-	DBAuth                        configdbauth.Config            `mapstructure:"db_auth,omitempty"`
+	DBAuth                        configdbauth.ID                `mapstructure:"db_auth,omitempty"`
 	Databases                     []string                       `mapstructure:"databases"`
 	ExcludeDatabases              []string                       `mapstructure:"exclude_databases"`
 	confignet.AddrConfig          `mapstructure:",squash"`       // provides Endpoint and Transport

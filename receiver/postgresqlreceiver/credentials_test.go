@@ -89,7 +89,7 @@ func TestConfigValidate_PasswordAndDBAuthMutuallyExclusive(t *testing.T) {
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
 	cfg.Password = "static"
-	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
+	cfg.DBAuth = configdbauth.ID(component.MustNewID("aws_iam"))
 
 	err := cfg.Validate()
 	require.Error(t, err)
@@ -100,7 +100,7 @@ func TestConfigValidate_DBAuthWithoutPasswordIsValid(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
+	cfg.DBAuth = configdbauth.ID(component.MustNewID("aws_iam"))
 
 	require.NoError(t, cfg.Validate(), "a db_auth block satisfies the credential requirement without a password")
 }
@@ -131,7 +131,7 @@ func TestResolveCredentialProvider_ResolvesFromHostExtension(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
-	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
+	cfg.DBAuth = configdbauth.ID(component.MustNewID("aws_iam"))
 
 	p, err := cfg.resolveCredentialProvider(credExtMap())
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestResolveCredentialProvider_NoMatchingExtension(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "db.example.com:5432"
 	cfg.Username = "monitor"
-	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
+	cfg.DBAuth = configdbauth.ID(component.MustNewID("aws_iam"))
 
 	_, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{})
 	require.Error(t, err, "no declared extension matches the provider ID")
@@ -168,7 +168,7 @@ func TestNewPoolClientFactory_AcceptsDBAuth(t *testing.T) {
 	cfg := createDefaultConfig().(*Config)
 	cfg.Endpoint = "localhost:5432"
 	cfg.Username = "u"
-	cfg.DBAuth = configdbauth.Config{ProviderID: component.MustNewID("aws_iam")}
+	cfg.DBAuth = configdbauth.ID(component.MustNewID("aws_iam"))
 
 	f := newPoolClientFactory(cfg)
 	t.Cleanup(func() { require.NoError(t, f.close()) }) // close pooled *sql.DBs so goleak stays clean
@@ -251,7 +251,7 @@ func TestConnectionString_NilCredentialFailsClosed(t *testing.T) {
 func TestConfigUnmarshal_DBAuthScalarID(t *testing.T) {
 	// The receiver config's db_auth block is a bare component-ID reference: the
 	// scalar value names the provider extension. Confirm confmap decodes that scalar
-	// into configdbauth.Config via its UnmarshalText hook (the same path a bare
+	// into configdbauth.ID via its UnmarshalText hook (the same path a bare
 	// component.ID field uses) and that resolveCredentialProvider resolves it.
 	cfg := createDefaultConfig().(*Config)
 	conf := confmap.NewFromStringMap(map[string]any{
@@ -262,7 +262,7 @@ func TestConfigUnmarshal_DBAuthScalarID(t *testing.T) {
 	require.NoError(t, conf.Unmarshal(cfg))
 	require.NoError(t, cfg.Validate())
 
-	require.Equal(t, component.MustNewID("aws_iam"), cfg.DBAuth.ProviderID,
+	require.Equal(t, component.MustNewID("aws_iam"), cfg.DBAuth.ComponentID(),
 		"the scalar db_auth value decodes into the provider component ID")
 
 	provider, err := cfg.resolveCredentialProvider(credExtMap())
@@ -283,7 +283,7 @@ func TestConfigUnmarshal_DBAuthNamedInstance(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 
 	id := component.MustNewIDWithName("aws_iam", "primary")
-	require.Equal(t, id, cfg.DBAuth.ProviderID)
+	require.Equal(t, id, cfg.DBAuth.ComponentID())
 
 	provider, err := cfg.resolveCredentialProvider(map[component.ID]component.Component{
 		id: fakeCredExtension{secret: "fake-token"},
