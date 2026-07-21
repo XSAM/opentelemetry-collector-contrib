@@ -31,9 +31,9 @@ override in the `db_auth` block.
 The **per-connection** inputs — the database endpoint and user — are normally
 not set here: the receiver passes its own endpoint and username with each
 credential request. They may still be pinned on the extension when needed; see the
-field table below for the precedence. The token is minted on demand via the AWS
-default credential chain (ECS task role, EC2 instance profile, IRSA), cached per
-target, and refreshed shortly before expiry.
+field table below for the precedence. The AWS config and default credential chain
+(ECS task role, EC2 instance profile, IRSA) are initialized once when the
+extension is created. A token is minted locally for each credential request.
 
 ## Configuration
 

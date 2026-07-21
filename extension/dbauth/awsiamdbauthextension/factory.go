@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
 
@@ -33,13 +34,17 @@ func createDefaultConfig() component.Config {
 	return &Config{}
 }
 
-func createExtension(_ context.Context, _ extension.Settings, cfg component.Config) (extension.Extension, error) {
+func createExtension(ctx context.Context, _ extension.Settings, cfg component.Config) (extension.Extension, error) {
 	c, ok := cfg.(*Config)
 	if !ok {
 		return nil, fmt.Errorf("aws_iam: unexpected config type %T", cfg)
 	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(c.Region))
+	if err != nil {
+		return nil, fmt.Errorf("aws_iam: load AWS config: %w", err)
+	}
 	return &iamExtension{
-		cfg:    c,
-		minter: newMinter(),
+		cfg:       c,
+		awsConfig: awsCfg,
 	}, nil
 }

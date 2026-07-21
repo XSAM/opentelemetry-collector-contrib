@@ -6,10 +6,12 @@ package awsiamdbauthextension
 import (
 	"context"
 	"errors"
-	"sync/atomic"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/extension"
@@ -17,23 +19,31 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/extension/dbauth"
 )
 
-// fakeMinter records calls and returns a canned token without touching AWS.
-type fakeMinter struct {
-	token    string
-	notAfter time.Time
-	err      error
-	calls    int64
-	lastTgt  target
+func staticCredentials() aws.CredentialsProvider {
+	return aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{
+			AccessKeyID:     "test-access-key",
+			SecretAccessKey: "test-secret-key",
+			Source:          "test",
+		}, nil
+	})
 }
 
-func (f *fakeMinter) Token(_ context.Context, t target) (string, time.Time, error) {
-	atomic.AddInt64(&f.calls, 1)
-	f.lastTgt = t
-	return f.token, f.notAfter, f.err
+func newTestExtension(c *Config, credentials aws.CredentialsProvider) *iamExtension {
+	return &iamExtension{
+		cfg: c,
+		awsConfig: aws.Config{
+			Region:      c.Region,
+			Credentials: credentials,
+		},
+	}
 }
 
-func newExtensionWithMinter(c *Config, m tokenMinter) *iamExtension {
-	return &iamExtension{cfg: c, minter: m}
+func parseToken(t *testing.T, token string) *url.URL {
+	t.Helper()
+	u, err := url.Parse("https://" + token)
+	require.NoError(t, err)
+	return u
 }
 
 // newProviderExtension creates the extension via the factory and asserts it
@@ -71,56 +81,67 @@ func TestExtension_StartShutdownNoop(t *testing.T) {
 }
 
 func TestGetCredential(t *testing.T) {
-	exp := time.Unix(2000, 0)
-	m := &fakeMinter{token: "rds-token", notAfter: exp}
-	e := newExtensionWithMinter(&Config{Region: "us-east-1"}, m)
+	e := newTestExtension(&Config{Region: "us-east-1"}, staticCredentials())
 
+	earliestExpiry := time.Now().Add(rdsTokenLifetime)
 	cred, err := e.GetCredential(context.Background(), dbauth.Request{Endpoint: "db:5432", Username: "monitor"})
+	latestExpiry := time.Now().Add(rdsTokenLifetime)
 	require.NoError(t, err)
 
 	assert.Nil(t, cred.Username, "AWS IAM supplies no username; consumer uses its configured one")
-	assert.Equal(t, "rds-token", cred.Secret)
 	require.NotNil(t, cred.NotAfter)
-	assert.Equal(t, exp, *cred.NotAfter)
+	assert.False(t, cred.NotAfter.Before(earliestExpiry))
+	assert.False(t, cred.NotAfter.After(latestExpiry))
 
-	// The request's endpoint/username plus the extension's region are threaded to
-	// the minter as the per-connection target.
-	assert.Equal(t,
-		target{Endpoint: "db:5432", Region: "us-east-1", DBUser: "monitor"},
-		m.lastTgt)
+	u := parseToken(t, cred.Secret)
+	assert.Equal(t, "db:5432", u.Host)
+	assert.Equal(t, "connect", u.Query().Get("Action"))
+	assert.Equal(t, "monitor", u.Query().Get("DBUser"))
+	assert.Equal(t, "900", u.Query().Get("X-Amz-Expires"))
+	assert.True(t, strings.HasPrefix(u.Query().Get("X-Amz-Credential"), "test-access-key/"))
+	assert.Contains(t, u.Query().Get("X-Amz-Credential"), "/us-east-1/rds-db/aws4_request")
 }
 
 func TestGetCredential_MintError(t *testing.T) {
 	sentinel := errors.New("mint failed")
-	e := newExtensionWithMinter(&Config{Region: "us-east-1"}, &fakeMinter{err: sentinel})
+	e := newTestExtension(&Config{Region: "us-east-1"}, aws.CredentialsProviderFunc(
+		func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{}, sentinel
+		},
+	))
 	_, err := e.GetCredential(context.Background(), dbauth.Request{Endpoint: "db:5432", Username: "monitor"})
 	require.ErrorIs(t, err, sentinel)
+	assert.ErrorContains(t, err, `aws_iam: mint RDS token for "db:5432"`)
 }
 
 func TestGetCredential_EndpointAndDBUserFromConfig(t *testing.T) {
 	// When the receiver makes a request with no endpoint/username, the extension's
 	// own configured endpoint and db_user are used — the fallback source.
-	m := &fakeMinter{token: "rds-token", notAfter: time.Unix(2000, 0)}
-	e := newExtensionWithMinter(&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"}, m)
+	e := newTestExtension(
+		&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"},
+		staticCredentials(),
+	)
 
-	_, err := e.GetCredential(context.Background(), dbauth.Request{})
+	cred, err := e.GetCredential(context.Background(), dbauth.Request{})
 	require.NoError(t, err)
-	assert.Equal(t,
-		target{Endpoint: "cfg-db:5432", Region: "us-east-1", DBUser: "cfg_user"},
-		m.lastTgt, "with an empty request the extension's configured endpoint/db_user are used")
+	u := parseToken(t, cred.Secret)
+	assert.Equal(t, "cfg-db:5432", u.Host)
+	assert.Equal(t, "cfg_user", u.Query().Get("DBUser"))
 }
 
 func TestGetCredential_RequestOutranksConfigEndpointAndDBUser(t *testing.T) {
 	// The receiver's per-connection request outranks the extension's own configured
 	// endpoint/db_user: a receiver that supplies its own values gets those, not the
 	// extension's provider-wide defaults.
-	m := &fakeMinter{token: "rds-token", notAfter: time.Unix(2000, 0)}
-	e := newExtensionWithMinter(&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"}, m)
+	e := newTestExtension(
+		&Config{Region: "us-east-1", Endpoint: "cfg-db:5432", DBUser: "cfg_user"},
+		staticCredentials(),
+	)
 
-	_, err := e.GetCredential(context.Background(),
+	cred, err := e.GetCredential(context.Background(),
 		dbauth.Request{Endpoint: "req-db:5432", Username: "req_user"})
 	require.NoError(t, err)
-	assert.Equal(t,
-		target{Endpoint: "req-db:5432", Region: "us-east-1", DBUser: "req_user"},
-		m.lastTgt, "the request's endpoint/username outrank the extension's configured ones")
+	u := parseToken(t, cred.Secret)
+	assert.Equal(t, "req-db:5432", u.Host)
+	assert.Equal(t, "req_user", u.Query().Get("DBUser"))
 }
