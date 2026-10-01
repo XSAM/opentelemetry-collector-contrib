@@ -5,8 +5,10 @@ package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-col
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/xml"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/DataDog/datadog-agent/pkg/obfuscate"
@@ -20,9 +22,19 @@ var xmlPlanObfuscationAttrs = []string{
 	"ParameterCompiledValue",
 }
 
+const (
+	xmlPlanCacheEntries   = 32
+	maxCachedXMLPlanBytes = 256 * 1024
+)
+
 type obfuscator struct {
 	*obfuscate.Obfuscator
 	logger *zap.Logger
+
+	xmlPlanCacheMu   sync.Mutex
+	xmlPlanCache     map[[sha256.Size]byte]string
+	xmlPlanCacheKeys [xmlPlanCacheEntries][sha256.Size]byte
+	xmlPlanCacheNext int
 }
 
 func newObfuscator(logger *zap.Logger) *obfuscator {
@@ -41,7 +53,8 @@ func newObfuscator(logger *zap.Logger) *obfuscator {
 				ObfuscationMode: obfuscate.ObfuscateAndNormalize,
 			},
 		}),
-		logger: logger,
+		logger:       logger,
+		xmlPlanCache: make(map[[sha256.Size]byte]string, xmlPlanCacheEntries),
 	}
 }
 
@@ -71,6 +84,18 @@ func (o *obfuscator) obfuscateSQLString(sql string) (string, error) {
 
 // obfuscateXMLPlan obfuscates SQL text & parameters from the provided SQL Server XML Plan
 func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
+	cacheable := len(rawPlan) <= maxCachedXMLPlanBytes
+	var digest [sha256.Size]byte
+	if cacheable {
+		digest = sha256.Sum256([]byte(rawPlan))
+		o.xmlPlanCacheMu.Lock()
+		cached, ok := o.xmlPlanCache[digest]
+		o.xmlPlanCacheMu.Unlock()
+		if ok {
+			return cached, nil
+		}
+	}
+
 	decoder := xml.NewDecoder(strings.NewReader(rawPlan))
 	var buffer bytes.Buffer
 	encoder := xml.NewEncoder(&buffer)
@@ -130,5 +155,18 @@ func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
 		return "", err
 	}
 
-	return buffer.String(), nil
+	result := buffer.String()
+	if cacheable && result != "" && len(result) <= maxCachedXMLPlanBytes {
+		o.xmlPlanCacheMu.Lock()
+		if _, exists := o.xmlPlanCache[digest]; !exists {
+			if len(o.xmlPlanCache) == xmlPlanCacheEntries {
+				delete(o.xmlPlanCache, o.xmlPlanCacheKeys[o.xmlPlanCacheNext])
+			}
+			o.xmlPlanCacheKeys[o.xmlPlanCacheNext] = digest
+			o.xmlPlanCacheNext = (o.xmlPlanCacheNext + 1) % xmlPlanCacheEntries
+		}
+		o.xmlPlanCache[digest] = result
+		o.xmlPlanCacheMu.Unlock()
+	}
+	return result, nil
 }

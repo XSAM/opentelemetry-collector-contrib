@@ -4,9 +4,12 @@
 package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,6 +82,110 @@ func TestObfuscateQueryPlan(t *testing.T) {
 	result, err := newObfuscator(zap.NewNop()).obfuscateXMLPlan(string(input))
 	assert.NoError(t, err)
 	assert.Equal(t, expectedQueryPlan, result)
+}
+
+func TestObfuscateQueryPlanRepeatedSensitiveValue(t *testing.T) {
+	plan := `<ShowPlanXML><Const ConstValue="42"/><Const ConstValue="42"/></ShowPlanXML>`
+
+	result, err := newObfuscator(zap.NewNop()).obfuscateXMLPlan(plan)
+
+	assert.NoError(t, err)
+	assert.NotContains(t, result, "42")
+	assert.Equal(t, 2, strings.Count(result, `ConstValue="?"`))
+}
+
+func TestObfuscateQueryPlanCacheUsesExactXMLAndKeepsOnlyRedactedOutput(t *testing.T) {
+	obf := newObfuscator(zap.NewNop())
+	plan := `<ShowPlanXML Id="one" StatementText="SELECT 42"></ShowPlanXML>`
+
+	first, err := obf.obfuscateXMLPlan(plan)
+	assert.NoError(t, err)
+	second, err := obf.obfuscateXMLPlan(plan)
+	assert.NoError(t, err)
+	assert.Equal(t, first, second)
+	assert.Len(t, obf.xmlPlanCache, 1)
+
+	changed, err := obf.obfuscateXMLPlan(strings.Replace(plan, `Id="one"`, `Id="two"`, 1))
+	assert.NoError(t, err)
+	assert.NotEqual(t, first, changed)
+	assert.Len(t, obf.xmlPlanCache, 2)
+	for _, cached := range obf.xmlPlanCache {
+		assert.NotContains(t, cached, "42")
+	}
+}
+
+func TestObfuscateQueryPlanCacheIsBoundedAndDoesNotCacheErrors(t *testing.T) {
+	obf := newObfuscator(zap.NewNop())
+	_, err := obf.obfuscateXMLPlan(`<ShowPlanXML>`)
+	assert.Error(t, err)
+	assert.Empty(t, obf.xmlPlanCache)
+
+	for i := range xmlPlanCacheEntries + 1 {
+		plan := fmt.Sprintf(`<ShowPlanXML Id="%d" StatementText="SELECT 42"></ShowPlanXML>`, i)
+		_, err := obf.obfuscateXMLPlan(plan)
+		assert.NoError(t, err)
+	}
+	assert.Len(t, obf.xmlPlanCache, xmlPlanCacheEntries)
+	first := sha256.Sum256([]byte(`<ShowPlanXML Id="0" StatementText="SELECT 42"></ShowPlanXML>`))
+	second := sha256.Sum256([]byte(`<ShowPlanXML Id="1" StatementText="SELECT 42"></ShowPlanXML>`))
+	assert.NotContains(t, obf.xmlPlanCache, first)
+	assert.Contains(t, obf.xmlPlanCache, second)
+
+	oversized := `<ShowPlanXML Data="` + strings.Repeat("x", maxCachedXMLPlanBytes) + `"></ShowPlanXML>`
+	_, err = obf.obfuscateXMLPlan(oversized)
+	assert.NoError(t, err)
+	assert.Len(t, obf.xmlPlanCache, xmlPlanCacheEntries)
+}
+
+func TestObfuscateQueryPlanCacheConcurrentHits(t *testing.T) {
+	obf := newObfuscator(zap.NewNop())
+	plan := `<ShowPlanXML StatementText="SELECT 42"></ShowPlanXML>`
+	expected, err := obf.obfuscateXMLPlan(plan)
+	require.NoError(t, err)
+
+	results := make(chan string, 16)
+	var workers sync.WaitGroup
+	for range 16 {
+		workers.Go(func() {
+			result, err := obf.obfuscateXMLPlan(plan)
+			if err != nil {
+				results <- err.Error()
+				return
+			}
+			results <- result
+		})
+	}
+	workers.Wait()
+	close(results)
+	for result := range results {
+		assert.Equal(t, expected, result)
+	}
+}
+
+func TestObfuscateQueryPlanCacheConcurrentMisses(t *testing.T) {
+	obf := newObfuscator(zap.NewNop())
+	plan := `<ShowPlanXML StatementText="SELECT 42"></ShowPlanXML>`
+	start := make(chan struct{})
+	results := make(chan string, 16)
+	var workers sync.WaitGroup
+	for range 16 {
+		workers.Go(func() {
+			<-start
+			result, err := obf.obfuscateXMLPlan(plan)
+			if err != nil {
+				results <- err.Error()
+				return
+			}
+			results <- result
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	for result := range results {
+		assert.Equal(t, `<ShowPlanXML StatementText="SELECT ?"></ShowPlanXML>`, result)
+	}
+	assert.Len(t, obf.xmlPlanCache, 1)
 }
 
 func TestInvalidQueryPlans(t *testing.T) {
