@@ -4,6 +4,7 @@
 package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 )
 
@@ -103,13 +107,13 @@ func TestObfuscateQueryPlanCacheUsesExactXMLAndKeepsOnlyRedactedOutput(t *testin
 	second, err := obf.obfuscateXMLPlan(plan)
 	assert.NoError(t, err)
 	assert.Equal(t, first, second)
-	assert.Len(t, obf.xmlPlanCache, 1)
+	assert.Equal(t, 1, obf.xmlPlanCache.Len())
 
 	changed, err := obf.obfuscateXMLPlan(strings.Replace(plan, `Id="one"`, `Id="two"`, 1))
 	assert.NoError(t, err)
 	assert.NotEqual(t, first, changed)
-	assert.Len(t, obf.xmlPlanCache, 2)
-	for _, cached := range obf.xmlPlanCache {
+	assert.Equal(t, 2, obf.xmlPlanCache.Len())
+	for _, cached := range obf.xmlPlanCache.Values() {
 		assert.NotContains(t, cached, "42")
 	}
 }
@@ -118,23 +122,67 @@ func TestObfuscateQueryPlanCacheIsBoundedAndDoesNotCacheErrors(t *testing.T) {
 	obf := newObfuscator(zap.NewNop())
 	_, err := obf.obfuscateXMLPlan(`<ShowPlanXML>`)
 	assert.Error(t, err)
-	assert.Empty(t, obf.xmlPlanCache)
+	assert.Zero(t, obf.xmlPlanCache.Len())
 
 	for i := range xmlPlanCacheEntries + 1 {
 		plan := fmt.Sprintf(`<ShowPlanXML Id="%d" StatementText="SELECT 42"></ShowPlanXML>`, i)
 		_, err := obf.obfuscateXMLPlan(plan)
 		assert.NoError(t, err)
 	}
-	assert.Len(t, obf.xmlPlanCache, xmlPlanCacheEntries)
+	assert.Equal(t, xmlPlanCacheEntries, obf.xmlPlanCache.Len())
 	first := sha256.Sum256([]byte(`<ShowPlanXML Id="0" StatementText="SELECT 42"></ShowPlanXML>`))
 	second := sha256.Sum256([]byte(`<ShowPlanXML Id="1" StatementText="SELECT 42"></ShowPlanXML>`))
-	assert.NotContains(t, obf.xmlPlanCache, first)
-	assert.Contains(t, obf.xmlPlanCache, second)
+	assert.False(t, obf.xmlPlanCache.Contains(first))
+	assert.True(t, obf.xmlPlanCache.Contains(second))
 
 	oversized := `<ShowPlanXML Data="` + strings.Repeat("x", maxCachedXMLPlanBytes) + `"></ShowPlanXML>`
 	_, err = obf.obfuscateXMLPlan(oversized)
 	assert.NoError(t, err)
-	assert.Len(t, obf.xmlPlanCache, xmlPlanCacheEntries)
+	assert.Equal(t, xmlPlanCacheEntries, obf.xmlPlanCache.Len())
+}
+
+func TestObfuscateQueryPlanCacheRefreshesRecentlyUsedPlan(t *testing.T) {
+	require.GreaterOrEqual(t, xmlPlanCacheEntries, 400)
+	obf := newObfuscator(zap.NewNop())
+	for i := range xmlPlanCacheEntries {
+		plan := fmt.Sprintf(`<ShowPlanXML Id="%d" StatementText="SELECT 42"></ShowPlanXML>`, i)
+		_, err := obf.obfuscateXMLPlan(plan)
+		require.NoError(t, err)
+	}
+	firstPlan := `<ShowPlanXML Id="0" StatementText="SELECT 42"></ShowPlanXML>`
+	_, err := obf.obfuscateXMLPlan(firstPlan)
+	require.NoError(t, err)
+	_, err = obf.obfuscateXMLPlan(`<ShowPlanXML Id="new" StatementText="SELECT 42"></ShowPlanXML>`)
+	require.NoError(t, err)
+
+	first := sha256.Sum256([]byte(firstPlan))
+	second := sha256.Sum256([]byte(`<ShowPlanXML Id="1" StatementText="SELECT 42"></ShowPlanXML>`))
+	assert.True(t, obf.xmlPlanCache.Contains(first))
+	assert.False(t, obf.xmlPlanCache.Contains(second))
+}
+
+func TestObfuscateQueryPlanCacheReportsAccesses(t *testing.T) {
+	telemetry := componenttest.NewTelemetry()
+	t.Cleanup(func() { require.NoError(t, telemetry.Shutdown(context.Background())) })
+	obf := newObfuscator(zap.NewNop())
+	obf.initCacheMetrics(telemetry.NewTelemetrySettings().MeterProvider)
+	plan := `<ShowPlanXML StatementText="SELECT 42"></ShowPlanXML>`
+	for range 2 {
+		_, err := obf.obfuscateXMLPlan(plan)
+		require.NoError(t, err)
+	}
+	_, err := obf.obfuscateXMLPlan(`<ShowPlanXML Data="` + strings.Repeat("x", maxCachedXMLPlanBytes) + `"/>`)
+	require.NoError(t, err)
+
+	got, err := telemetry.GetMetric("otelcol_sqlserver_xml_plan_cache_accesses")
+	require.NoError(t, err)
+	counts := map[string]int64{}
+	for _, point := range got.Data.(metricdata.Sum[int64]).DataPoints {
+		result, ok := point.Attributes.Value(attribute.Key("result"))
+		require.True(t, ok)
+		counts[result.AsString()] = point.Value
+	}
+	assert.Equal(t, map[string]int64{"miss": 1, "hit": 1, "bypass": 1}, counts)
 }
 
 func TestObfuscateQueryPlanCacheConcurrentHits(t *testing.T) {
@@ -185,7 +233,7 @@ func TestObfuscateQueryPlanCacheConcurrentMisses(t *testing.T) {
 	for result := range results {
 		assert.Equal(t, `<ShowPlanXML StatementText="SELECT ?"></ShowPlanXML>`, result)
 	}
-	assert.Len(t, obf.xmlPlanCache, 1)
+	assert.Equal(t, 1, obf.xmlPlanCache.Len())
 }
 
 func TestInvalidQueryPlans(t *testing.T) {

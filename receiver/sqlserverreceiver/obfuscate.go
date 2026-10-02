@@ -5,13 +5,16 @@ package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-col
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/xml"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/DataDog/datadog-agent/pkg/obfuscate"
+	lru "github.com/hashicorp/golang-lru/v2"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 )
 
@@ -22,8 +25,14 @@ var xmlPlanObfuscationAttrs = []string{
 	"ParameterCompiledValue",
 }
 
+var (
+	xmlPlanCacheHit    = metric.WithAttributes(attribute.String("result", "hit"))
+	xmlPlanCacheMiss   = metric.WithAttributes(attribute.String("result", "miss"))
+	xmlPlanCacheBypass = metric.WithAttributes(attribute.String("result", "bypass"))
+)
+
 const (
-	xmlPlanCacheEntries   = 32
+	xmlPlanCacheEntries   = 400
 	maxCachedXMLPlanBytes = 256 * 1024
 )
 
@@ -31,13 +40,13 @@ type obfuscator struct {
 	*obfuscate.Obfuscator
 	logger *zap.Logger
 
-	xmlPlanCacheMu   sync.Mutex
-	xmlPlanCache     map[[sha256.Size]byte]string
-	xmlPlanCacheKeys [xmlPlanCacheEntries][sha256.Size]byte
-	xmlPlanCacheNext int
+	xmlPlanCache  *lru.Cache[[sha256.Size]byte, string]
+	cacheAccesses metric.Int64Counter
 }
 
 func newObfuscator(logger *zap.Logger) *obfuscator {
+	// The fixed positive size cannot make lru.New fail.
+	cache, _ := lru.New[[sha256.Size]byte, string](xmlPlanCacheEntries)
 	return &obfuscator{
 		Obfuscator: obfuscate.NewObfuscator(obfuscate.Config{
 			SQL: obfuscate.SQLConfig{
@@ -54,7 +63,29 @@ func newObfuscator(logger *zap.Logger) *obfuscator {
 			},
 		}),
 		logger:       logger,
-		xmlPlanCache: make(map[[sha256.Size]byte]string, xmlPlanCacheEntries),
+		xmlPlanCache: cache,
+	}
+}
+
+func (o *obfuscator) initCacheMetrics(provider metric.MeterProvider) {
+	if provider == nil {
+		return
+	}
+	accesses, err := provider.Meter("github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver").Int64Counter(
+		"otelcol_sqlserver_xml_plan_cache_accesses",
+		metric.WithDescription("Number of SQL Server XML query-plan cache hits, misses, and bypasses."),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		o.logger.Warn("Unable to create XML plan cache access metric", zap.Error(err))
+		return
+	}
+	o.cacheAccesses = accesses
+}
+
+func (o *obfuscator) recordCacheAccess(result metric.AddOption) {
+	if o.cacheAccesses != nil {
+		o.cacheAccesses.Add(context.Background(), 1, result)
 	}
 }
 
@@ -88,12 +119,14 @@ func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
 	var digest [sha256.Size]byte
 	if cacheable {
 		digest = sha256.Sum256([]byte(rawPlan))
-		o.xmlPlanCacheMu.Lock()
-		cached, ok := o.xmlPlanCache[digest]
-		o.xmlPlanCacheMu.Unlock()
+		cached, ok := o.xmlPlanCache.Get(digest)
 		if ok {
+			o.recordCacheAccess(xmlPlanCacheHit)
 			return cached, nil
 		}
+		o.recordCacheAccess(xmlPlanCacheMiss)
+	} else {
+		o.recordCacheAccess(xmlPlanCacheBypass)
 	}
 
 	decoder := xml.NewDecoder(strings.NewReader(rawPlan))
@@ -157,16 +190,7 @@ func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
 
 	result := buffer.String()
 	if cacheable && result != "" && len(result) <= maxCachedXMLPlanBytes {
-		o.xmlPlanCacheMu.Lock()
-		if _, exists := o.xmlPlanCache[digest]; !exists {
-			if len(o.xmlPlanCache) == xmlPlanCacheEntries {
-				delete(o.xmlPlanCache, o.xmlPlanCacheKeys[o.xmlPlanCacheNext])
-			}
-			o.xmlPlanCacheKeys[o.xmlPlanCacheNext] = digest
-			o.xmlPlanCacheNext = (o.xmlPlanCacheNext + 1) % xmlPlanCacheEntries
-		}
-		o.xmlPlanCache[digest] = result
-		o.xmlPlanCacheMu.Unlock()
+		o.xmlPlanCache.Add(digest, result)
 	}
 	return result, nil
 }

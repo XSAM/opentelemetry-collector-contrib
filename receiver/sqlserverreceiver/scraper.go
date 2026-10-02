@@ -91,6 +91,10 @@ func newSQLServerScraper(id component.ID,
 			serverPort = defaultSQLServerPort
 		}
 	}
+	obfuscator := newObfuscator(params.Logger)
+	if query == getSQLServerQueryTextAndPlanQuery() {
+		obfuscator.initCacheMetrics(params.MeterProvider)
+	}
 
 	return &sqlServerScraperHelper{
 		id:                     id,
@@ -104,7 +108,7 @@ func newSQLServerScraper(id component.ID,
 		lb:                     metadata.NewLogsBuilder(cfg.LogsBuilderConfig, params),
 		cache:                  cache,
 		lastExecutionTimestamp: time.Unix(0, 0),
-		obfuscator:             newObfuscator(params.Logger),
+		obfuscator:             obfuscator,
 		serviceInstanceID:      serviceInstanceID,
 		serverAddress:          serverAddress,
 		serverPort:             int64(serverPort),
