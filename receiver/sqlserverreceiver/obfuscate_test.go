@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -126,7 +127,7 @@ func TestObfuscateQueryPlanCacheIsBoundedAndDoesNotCacheErrors(t *testing.T) {
 
 	for i := range xmlPlanCacheEntries + 1 {
 		plan := fmt.Sprintf(`<ShowPlanXML Id="%d" StatementText="SELECT 42"></ShowPlanXML>`, i)
-		_, err := obf.obfuscateXMLPlan(plan)
+		_, err = obf.obfuscateXMLPlan(plan)
 		assert.NoError(t, err)
 	}
 	assert.Equal(t, xmlPlanCacheEntries, obf.xmlPlanCache.Len())
@@ -163,9 +164,9 @@ func TestObfuscateQueryPlanCacheRefreshesRecentlyUsedPlan(t *testing.T) {
 
 func TestObfuscateQueryPlanCacheReportsAccesses(t *testing.T) {
 	telemetry := componenttest.NewTelemetry()
-	t.Cleanup(func() { require.NoError(t, telemetry.Shutdown(context.Background())) })
+	t.Cleanup(func() { require.NoError(t, telemetry.Shutdown(context.WithoutCancel(t.Context()))) })
 	obf := newObfuscator(zap.NewNop())
-	obf.initCacheMetrics(telemetry.NewTelemetrySettings().MeterProvider)
+	obf.initCacheMetrics(telemetry.NewTelemetrySettings(), component.MustNewIDWithName("sqlserver", "cache-test"))
 	plan := `<ShowPlanXML StatementText="SELECT 42"></ShowPlanXML>`
 	for range 2 {
 		_, err := obf.obfuscateXMLPlan(plan)
@@ -180,9 +181,19 @@ func TestObfuscateQueryPlanCacheReportsAccesses(t *testing.T) {
 	for _, point := range got.Data.(metricdata.Sum[int64]).DataPoints {
 		result, ok := point.Attributes.Value(attribute.Key("result"))
 		require.True(t, ok)
+		receiver, ok := point.Attributes.Value(attribute.Key("receiver"))
+		require.True(t, ok)
+		assert.Equal(t, "sqlserver/cache-test", receiver.AsString())
 		counts[result.AsString()] = point.Value
 	}
 	assert.Equal(t, map[string]int64{"miss": 1, "hit": 1, "bypass": 1}, counts)
+}
+
+func TestObfuscateQueryPlanCacheWithoutTelemetry(t *testing.T) {
+	obf := newObfuscator(zap.NewNop())
+	obf.initCacheMetrics(component.TelemetrySettings{}, component.MustNewID("sqlserver"))
+	_, err := obf.obfuscateXMLPlan(`<ShowPlanXML StatementText="SELECT 42"/>`)
+	require.NoError(t, err)
 }
 
 func TestObfuscateQueryPlanCacheConcurrentHits(t *testing.T) {

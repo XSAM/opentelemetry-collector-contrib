@@ -1380,3 +1380,22 @@ top query
 | sqlserver.computer.name | The name of the SQL Server instance being monitored. | Any Str | false | - | - |
 | sqlserver.database.name | The name of the SQL Server database. | Any Str | true | - | - |
 | sqlserver.instance.name | The name of the SQL Server instance being monitored. | Any Str | false | - | - |
+
+## Internal Telemetry
+
+The following telemetry is emitted by this component.
+
+### otelcol_sqlserver_xml_plan_cache_accesses
+
+Number of SQL Server XML query-plan cache accesses.
+
+| Unit | Metric Type | Value Type | Monotonic | Stability |
+| ---- | ----------- | ---------- | --------- | --------- |
+| {access} | Sum | Int | true | Development |
+
+#### Attributes
+
+| Name | Description | Values | Semantic Convention |
+| ---- | ----------- | ------ | ------------------- |
+| receiver | The configured SQL Server receiver instance. | Any Str | - |
+| result | The result of an XML query-plan cache access. | Str: ``hit``, ``miss``, ``bypass`` | - |

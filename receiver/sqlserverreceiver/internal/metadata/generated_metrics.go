@@ -334,6 +334,36 @@ var MapAttributeRequestState = map[string]AttributeRequestState{
 	"waiting": AttributeRequestStateWaiting,
 }
 
+// AttributeResult specifies the value result attribute.
+type AttributeResult int
+
+const (
+	_ AttributeResult = iota
+	AttributeResultHit
+	AttributeResultMiss
+	AttributeResultBypass
+)
+
+// String returns the string representation of the AttributeResult.
+func (av AttributeResult) String() string {
+	switch av {
+	case AttributeResultHit:
+		return "hit"
+	case AttributeResultMiss:
+		return "miss"
+	case AttributeResultBypass:
+		return "bypass"
+	}
+	return ""
+}
+
+// MapAttributeResult is a helper map of string to AttributeResult attribute value.
+var MapAttributeResult = map[string]AttributeResult{
+	"hit":    AttributeResultHit,
+	"miss":   AttributeResultMiss,
+	"bypass": AttributeResultBypass,
+}
+
 // AttributeSqlserverAccessScanType specifies the value sqlserver.access.scan.type attribute.
 type AttributeSqlserverAccessScanType int
 

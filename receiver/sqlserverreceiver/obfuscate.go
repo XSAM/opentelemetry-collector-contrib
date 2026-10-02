@@ -13,9 +13,12 @@ import (
 
 	"github.com/DataDog/datadog-agent/pkg/obfuscate"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver/internal/metadata"
 )
 
 var xmlPlanObfuscationAttrs = []string{
@@ -24,12 +27,6 @@ var xmlPlanObfuscationAttrs = []string{
 	"ScalarString",
 	"ParameterCompiledValue",
 }
-
-var (
-	xmlPlanCacheHit    = metric.WithAttributes(attribute.String("result", "hit"))
-	xmlPlanCacheMiss   = metric.WithAttributes(attribute.String("result", "miss"))
-	xmlPlanCacheBypass = metric.WithAttributes(attribute.String("result", "bypass"))
-)
 
 const (
 	xmlPlanCacheEntries   = 400
@@ -42,6 +39,9 @@ type obfuscator struct {
 
 	xmlPlanCache  *lru.Cache[[sha256.Size]byte, string]
 	cacheAccesses metric.Int64Counter
+	cacheHit      metric.AddOption
+	cacheMiss     metric.AddOption
+	cacheBypass   metric.AddOption
 }
 
 func newObfuscator(logger *zap.Logger) *obfuscator {
@@ -67,20 +67,19 @@ func newObfuscator(logger *zap.Logger) *obfuscator {
 	}
 }
 
-func (o *obfuscator) initCacheMetrics(provider metric.MeterProvider) {
-	if provider == nil {
+func (o *obfuscator) initCacheMetrics(settings component.TelemetrySettings, id component.ID) {
+	if settings.MeterProvider == nil {
 		return
 	}
-	accesses, err := provider.Meter("github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver").Int64Counter(
-		"otelcol_sqlserver_xml_plan_cache_accesses",
-		metric.WithDescription("Number of SQL Server XML query-plan cache hits, misses, and bypasses."),
-		metric.WithUnit("1"),
-	)
+	telemetry, err := metadata.NewTelemetryBuilder(settings)
 	if err != nil {
 		o.logger.Warn("Unable to create XML plan cache access metric", zap.Error(err))
 		return
 	}
-	o.cacheAccesses = accesses
+	o.cacheAccesses = telemetry.SqlserverXMLPlanCacheAccesses
+	o.cacheHit = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "hit"))
+	o.cacheMiss = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "miss"))
+	o.cacheBypass = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "bypass"))
 }
 
 func (o *obfuscator) recordCacheAccess(result metric.AddOption) {
@@ -121,12 +120,12 @@ func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
 		digest = sha256.Sum256([]byte(rawPlan))
 		cached, ok := o.xmlPlanCache.Get(digest)
 		if ok {
-			o.recordCacheAccess(xmlPlanCacheHit)
+			o.recordCacheAccess(o.cacheHit)
 			return cached, nil
 		}
-		o.recordCacheAccess(xmlPlanCacheMiss)
+		o.recordCacheAccess(o.cacheMiss)
 	} else {
-		o.recordCacheAccess(xmlPlanCacheBypass)
+		o.recordCacheAccess(o.cacheBypass)
 	}
 
 	decoder := xml.NewDecoder(strings.NewReader(rawPlan))

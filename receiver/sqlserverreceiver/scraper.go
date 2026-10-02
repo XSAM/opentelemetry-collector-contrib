@@ -93,7 +93,7 @@ func newSQLServerScraper(id component.ID,
 	}
 	obfuscator := newObfuscator(params.Logger)
 	if query == getSQLServerQueryTextAndPlanQuery() {
-		obfuscator.initCacheMetrics(params.MeterProvider)
+		obfuscator.initCacheMetrics(params.TelemetrySettings, id)
 	}
 
 	return &sqlServerScraperHelper{

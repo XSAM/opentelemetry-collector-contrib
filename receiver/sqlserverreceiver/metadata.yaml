@@ -19,6 +19,18 @@ status:
     emeritus: [StefanKurek]
     seeking_new: true
 
+telemetry:
+  metrics:
+    sqlserver_xml_plan_cache_accesses:
+      enabled: true
+      description: Number of SQL Server XML query-plan cache accesses.
+      stability: development
+      unit: "{access}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [receiver, result]
+
 resource_attributes:
   host.name:
     description: The host name of SQL Server
@@ -145,6 +157,9 @@ attributes:
     description: The physical filename of the file being monitored.
     type: string
     requirement_level: recommended
+  receiver:
+    description: The configured SQL Server receiver instance.
+    type: string
   replica.direction:
     description: The direction of flow of bytes for replica.
     type: string
@@ -155,6 +170,10 @@ attributes:
     type: string
     requirement_level: recommended
     enum: [waiting]
+  result:
+    description: The result of an XML query-plan cache access.
+    type: string
+    enum: [hit, miss, bypass]
   sqlserver.access.scan.type:
     description: The type of access method scan being performed.
     type: string
