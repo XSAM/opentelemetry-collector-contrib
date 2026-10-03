@@ -1385,17 +1385,44 @@ top query
 
 The following telemetry is emitted by this component.
 
-### otelcol_sqlserver_xml_plan_cache_accesses
+### otelcol_sqlserver_xml_plan_cache_bypasses
 
-Number of SQL Server XML query-plan cache accesses.
+Number of SQL Server XML query plans too large for a cache lookup.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {access} | Sum | Int | true | Development |
+| {plan} | Sum | Int | true | Development |
 
 #### Attributes
 
 | Name | Description | Values | Semantic Convention |
 | ---- | ----------- | ------ | ------------------- |
 | receiver | The configured SQL Server receiver instance. | Any Str | - |
-| result | The result of an XML query-plan cache access. | Str: ``hit``, ``miss``, ``bypass`` | - |
+
+### otelcol_sqlserver_xml_plan_cache_hits
+
+Number of SQL Server XML query-plan cache lookups that hit.
+
+| Unit | Metric Type | Value Type | Monotonic | Stability |
+| ---- | ----------- | ---------- | --------- | --------- |
+| {lookup} | Sum | Int | true | Development |
+
+#### Attributes
+
+| Name | Description | Values | Semantic Convention |
+| ---- | ----------- | ------ | ------------------- |
+| receiver | The configured SQL Server receiver instance. | Any Str | - |
+
+### otelcol_sqlserver_xml_plan_cache_misses
+
+Number of SQL Server XML query-plan cache lookups that missed.
+
+| Unit | Metric Type | Value Type | Monotonic | Stability |
+| ---- | ----------- | ---------- | --------- | --------- |
+| {lookup} | Sum | Int | true | Development |
+
+#### Attributes
+
+| Name | Description | Values | Semantic Convention |
+| ---- | ----------- | ------ | ------------------- |
+| receiver | The configured SQL Server receiver instance. | Any Str | - |

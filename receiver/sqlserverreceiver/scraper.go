@@ -91,9 +91,10 @@ func newSQLServerScraper(id component.ID,
 			serverPort = defaultSQLServerPort
 		}
 	}
-	obfuscator := newObfuscator(params.Logger)
-	if query == getSQLServerQueryTextAndPlanQuery() {
-		obfuscator.initCacheMetrics(params.TelemetrySettings, id)
+	cacheEnabled := query == getSQLServerQueryTextAndPlanQuery() && cfg.TopQueryCollection.QueryPlanCache.Enabled
+	obfuscator := newObfuscator(params.Logger, cacheEnabled)
+	if cacheEnabled {
+		obfuscator.initCacheMetrics(params.TelemetrySettings, params.ID)
 	}
 
 	return &sqlServerScraperHelper{

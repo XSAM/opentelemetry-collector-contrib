@@ -25,7 +25,9 @@ type TelemetryBuilder struct {
 	meter                         metric.Meter
 	mu                            sync.Mutex
 	registrations                 []metric.Registration
-	SqlserverXMLPlanCacheAccesses metric.Int64Counter
+	SqlserverXMLPlanCacheBypasses metric.Int64Counter
+	SqlserverXMLPlanCacheHits     metric.Int64Counter
+	SqlserverXMLPlanCacheMisses   metric.Int64Counter
 }
 
 // TelemetryBuilderOption applies changes to default builder.
@@ -57,10 +59,22 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	}
 	builder.meter = Meter(settings)
 	var err, errs error
-	builder.SqlserverXMLPlanCacheAccesses, err = builder.meter.Int64Counter(
-		"otelcol_sqlserver_xml_plan_cache_accesses",
-		metric.WithDescription("Number of SQL Server XML query-plan cache accesses. [Development]"),
-		metric.WithUnit("{access}"),
+	builder.SqlserverXMLPlanCacheBypasses, err = builder.meter.Int64Counter(
+		"otelcol_sqlserver_xml_plan_cache_bypasses",
+		metric.WithDescription("Number of SQL Server XML query plans too large for a cache lookup. [Development]"),
+		metric.WithUnit("{plan}"),
+	)
+	errs = errors.Join(errs, err)
+	builder.SqlserverXMLPlanCacheHits, err = builder.meter.Int64Counter(
+		"otelcol_sqlserver_xml_plan_cache_hits",
+		metric.WithDescription("Number of SQL Server XML query-plan cache lookups that hit. [Development]"),
+		metric.WithUnit("{lookup}"),
+	)
+	errs = errors.Join(errs, err)
+	builder.SqlserverXMLPlanCacheMisses, err = builder.meter.Int64Counter(
+		"otelcol_sqlserver_xml_plan_cache_misses",
+		metric.WithDescription("Number of SQL Server XML query-plan cache lookups that missed. [Development]"),
+		metric.WithUnit("{lookup}"),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

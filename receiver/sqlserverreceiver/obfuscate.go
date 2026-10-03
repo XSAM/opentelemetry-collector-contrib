@@ -29,7 +29,7 @@ var xmlPlanObfuscationAttrs = []string{
 }
 
 const (
-	xmlPlanCacheEntries   = 400
+	xmlPlanCacheEntries   = 300
 	maxCachedXMLPlanBytes = 256 * 1024
 )
 
@@ -37,16 +37,19 @@ type obfuscator struct {
 	*obfuscate.Obfuscator
 	logger *zap.Logger
 
-	xmlPlanCache  *lru.Cache[[sha256.Size]byte, string]
-	cacheAccesses metric.Int64Counter
-	cacheHit      metric.AddOption
-	cacheMiss     metric.AddOption
-	cacheBypass   metric.AddOption
+	xmlPlanCache    *lru.Cache[[sha256.Size]byte, string]
+	cacheHits       metric.Int64Counter
+	cacheMisses     metric.Int64Counter
+	cacheBypasses   metric.Int64Counter
+	cacheMetricAttr metric.AddOption
 }
 
-func newObfuscator(logger *zap.Logger) *obfuscator {
-	// The fixed positive size cannot make lru.New fail.
-	cache, _ := lru.New[[sha256.Size]byte, string](xmlPlanCacheEntries)
+func newObfuscator(logger *zap.Logger, cacheEnabled bool) *obfuscator {
+	var cache *lru.Cache[[sha256.Size]byte, string]
+	if cacheEnabled {
+		// The fixed positive size cannot make lru.New fail.
+		cache, _ = lru.New[[sha256.Size]byte, string](xmlPlanCacheEntries)
+	}
 	return &obfuscator{
 		Obfuscator: obfuscate.NewObfuscator(obfuscate.Config{
 			SQL: obfuscate.SQLConfig{
@@ -73,18 +76,18 @@ func (o *obfuscator) initCacheMetrics(settings component.TelemetrySettings, id c
 	}
 	telemetry, err := metadata.NewTelemetryBuilder(settings)
 	if err != nil {
-		o.logger.Warn("Unable to create XML plan cache access metric", zap.Error(err))
+		o.logger.Warn("Unable to create XML plan cache metrics", zap.Error(err))
 		return
 	}
-	o.cacheAccesses = telemetry.SqlserverXMLPlanCacheAccesses
-	o.cacheHit = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "hit"))
-	o.cacheMiss = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "miss"))
-	o.cacheBypass = metric.WithAttributes(attribute.String("receiver", id.String()), attribute.String("result", "bypass"))
+	o.cacheHits = telemetry.SqlserverXMLPlanCacheHits
+	o.cacheMisses = telemetry.SqlserverXMLPlanCacheMisses
+	o.cacheBypasses = telemetry.SqlserverXMLPlanCacheBypasses
+	o.cacheMetricAttr = metric.WithAttributes(attribute.String("receiver", id.String()))
 }
 
-func (o *obfuscator) recordCacheAccess(result metric.AddOption) {
-	if o.cacheAccesses != nil {
-		o.cacheAccesses.Add(context.Background(), 1, result)
+func (o *obfuscator) recordCacheEvent(counter metric.Int64Counter) {
+	if counter != nil {
+		counter.Add(context.Background(), 1, o.cacheMetricAttr)
 	}
 }
 
@@ -114,18 +117,18 @@ func (o *obfuscator) obfuscateSQLString(sql string) (string, error) {
 
 // obfuscateXMLPlan obfuscates SQL text & parameters from the provided SQL Server XML Plan
 func (o *obfuscator) obfuscateXMLPlan(rawPlan string) (string, error) {
-	cacheable := len(rawPlan) <= maxCachedXMLPlanBytes
+	cacheable := o.xmlPlanCache != nil && len(rawPlan) <= maxCachedXMLPlanBytes
 	var digest [sha256.Size]byte
 	if cacheable {
 		digest = sha256.Sum256([]byte(rawPlan))
 		cached, ok := o.xmlPlanCache.Get(digest)
 		if ok {
-			o.recordCacheAccess(o.cacheHit)
+			o.recordCacheEvent(o.cacheHits)
 			return cached, nil
 		}
-		o.recordCacheAccess(o.cacheMiss)
-	} else {
-		o.recordCacheAccess(o.cacheBypass)
+		o.recordCacheEvent(o.cacheMisses)
+	} else if o.xmlPlanCache != nil {
+		o.recordCacheEvent(o.cacheBypasses)
 	}
 
 	decoder := xml.NewDecoder(strings.NewReader(rawPlan))

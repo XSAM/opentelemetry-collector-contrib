@@ -21,15 +21,33 @@ status:
 
 telemetry:
   metrics:
-    sqlserver_xml_plan_cache_accesses:
+    sqlserver_xml_plan_cache_bypasses:
       enabled: true
-      description: Number of SQL Server XML query-plan cache accesses.
+      description: Number of SQL Server XML query plans too large for a cache lookup.
       stability: development
-      unit: "{access}"
+      unit: "{plan}"
       sum:
         value_type: int
         monotonic: true
-      attributes: [receiver, result]
+      attributes: [receiver]
+    sqlserver_xml_plan_cache_hits:
+      enabled: true
+      description: Number of SQL Server XML query-plan cache lookups that hit.
+      stability: development
+      unit: "{lookup}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [receiver]
+    sqlserver_xml_plan_cache_misses:
+      enabled: true
+      description: Number of SQL Server XML query-plan cache lookups that missed.
+      stability: development
+      unit: "{lookup}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [receiver]
 
 resource_attributes:
   host.name:
@@ -170,10 +188,6 @@ attributes:
     type: string
     requirement_level: recommended
     enum: [waiting]
-  result:
-    description: The result of an XML query-plan cache access.
-    type: string
-    enum: [hit, miss, bypass]
   sqlserver.access.scan.type:
     description: The type of access method scan being performed.
     type: string

@@ -86,6 +86,8 @@ sqlserver:
     max_query_sample_count: 1000               # maximum number query we store in cache for top queries.
     top_query_count: 250                       # The maximum number of active queries to report in a single run.
     collection_interval: 60s                   # collection interval for top query collection specifically
+    query_plan_cache:
+      enabled: true                            # receiver-side obfuscated XML-plan cache
   query_sample_collection:                     # this collection exports the currently (relate to the query time) executing queries as logs
     max_rows_per_query: 100                    # the maximum number of samples to return for one single query.
   top_procedure_collection:                    # this collection exports aggregated stored procedure statistics as logs
@@ -99,6 +101,9 @@ The following settings are optional:
 - `instance_name` (optional): The instance name identifies the specific SQL Server instance being monitored.
   If unspecified, metrics will be scraped from all instances. If configured, the `computer_name` must also be set
   when running on Windows.
+- `top_query_collection.query_plan_cache.enabled` (default = `true`): Cache up to 300 obfuscated
+  XML plans in this receiver's memory. Set to `false` to disable this cache. This does not change
+  SQL Server's own query-plan cache. Each cached plan is limited to 256 KiB.
 - `top_procedure_collection` (optional): Tunes the `db.server.top_procedure` event.
   - `max_procedure_sample_count` (default = `1000`, max `10000`): How many procedures to read from
     `sys.dm_exec_procedure_stats` as candidates each run.

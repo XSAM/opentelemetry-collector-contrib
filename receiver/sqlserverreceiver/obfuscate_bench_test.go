@@ -18,7 +18,7 @@ func BenchmarkObfuscateXMLPlan(b *testing.B) {
 		b.Fatal(err)
 	}
 	plan := string(content)
-	obfuscator := newObfuscator(zap.NewNop())
+	obfuscator := newObfuscator(zap.NewNop(), true)
 	b.SetBytes(int64(len(plan)))
 	b.ReportAllocs()
 
@@ -43,7 +43,7 @@ func BenchmarkObfuscateXMLPlanDistinct(b *testing.B) {
 	for i := range plans {
 		plans[i] = fmt.Sprintf("%s<!-- plan %d -->", plan, i)
 	}
-	obfuscator := newObfuscator(zap.NewNop())
+	obfuscator := newObfuscator(zap.NewNop(), true)
 	b.SetBytes(int64(len(plan)))
 	b.ReportAllocs()
 

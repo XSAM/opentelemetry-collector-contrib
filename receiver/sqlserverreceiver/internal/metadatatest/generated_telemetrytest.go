@@ -21,18 +21,50 @@ func NewSettings(tt *componenttest.Telemetry) receiver.Settings {
 	return set
 }
 
-func AssertEqualSqlserverXMLPlanCacheAccesses(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualSqlserverXMLPlanCacheBypasses(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_sqlserver_xml_plan_cache_accesses",
-		Description: "Number of SQL Server XML query-plan cache accesses. [Development]",
-		Unit:        "{access}",
+		Name:        "otelcol_sqlserver_xml_plan_cache_bypasses",
+		Description: "Number of SQL Server XML query plans too large for a cache lookup. [Development]",
+		Unit:        "{plan}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_sqlserver_xml_plan_cache_accesses")
+	got, err := tt.GetMetric("otelcol_sqlserver_xml_plan_cache_bypasses")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
+func AssertEqualSqlserverXMLPlanCacheHits(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_sqlserver_xml_plan_cache_hits",
+		Description: "Number of SQL Server XML query-plan cache lookups that hit. [Development]",
+		Unit:        "{lookup}",
+		Data: metricdata.Sum[int64]{
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
+			DataPoints:  dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_sqlserver_xml_plan_cache_hits")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
+func AssertEqualSqlserverXMLPlanCacheMisses(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_sqlserver_xml_plan_cache_misses",
+		Description: "Number of SQL Server XML query-plan cache lookups that missed. [Development]",
+		Unit:        "{lookup}",
+		Data: metricdata.Sum[int64]{
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
+			DataPoints:  dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_sqlserver_xml_plan_cache_misses")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
